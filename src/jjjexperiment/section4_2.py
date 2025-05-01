@@ -328,7 +328,7 @@ def calc_Q_UT_A(case_name, A_A, A_MR, A_OR, r_env, mu_H, mu_C, q_hs_rtd_H, q_hs_
                 L_d_t_flr1st = 1 * r_A_s_ufac * np.sum(L_H_d_t_i, axis=0)
             case (None, _):
                 # 一階冷房負荷
-                L_d_t_flr1st = -1 * r_A_s_ufac * np.sum(L_CS_d_t_i + L_CL_d_t_i, axis=0)
+                L_d_t_flr1st = -1 * r_A_s_ufac * np.sum(L_CS_d_t_i, axis=0)            #250501 顕熱のみ 井口
             case (_, _):
                 raise Exception('暖房・冷房の定格能力が指定されていません。')
 
@@ -426,7 +426,7 @@ def calc_Q_UT_A(case_name, A_A, A_MR, A_OR, r_env, mu_H, mu_C, q_hs_rtd_H, q_hs_
                 A_prt_A = A_prt_A,
                 L_H_NR_A = L_H_NR_d_t_A,  # (8760,)
                 L_CS_NR_A = L_CS_NR_d_t_A,  # (8760,)
-                Theta_NR = 20,  # この時点では仮置きの値を使用
+                Theta_NR = Theta_in_d_t,              # この時点では仮置きの値を使用⇒夏期は27℃とする必要がある　250501 井口
                 Theta_uf = Theta_uf_d_t,  # (8760,)
                 HCM = HCM  # (8760,)
             )
