@@ -446,6 +446,7 @@ def calc_Q_UT_A(case_name, A_A, A_MR, A_OR, r_env, mu_H, mu_C, q_hs_rtd_H, q_hs_
                 Theta_uf = Theta_uf_d_t,  # (8760,)
                 HCM = HCM  # (8760,)
             )
+        print("Theta_star_NR_d_t[4848]", Theta_star_NR_d_t[4848])
     else:
         Theta_star_NR_d_t  \
             = dc.get_Theta_star_NR_d_t(
