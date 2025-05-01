@@ -414,6 +414,22 @@ def calc_Q_UT_A(case_name, A_A, A_MR, A_OR, r_env, mu_H, mu_C, q_hs_rtd_H, q_hs_
         A_prt_A = np.sum(A_prt_i)
         HCM = np.array(jjj_ipt.ClimateEntity(region).get_HCM_d_t())
 
+        #デバッグ用 250501 IGUCHI
+        print("Theta_in_d_t[4848]", Theta_in_d_t[4848])
+        print("Q", Q)
+        print("A_NR", A_NR)
+        print("V_vent_l_NR_d_t[4848]", V_vent_l_NR_d_t[4848])
+        print("V_dash_supply_A[4848]", V_dash_supply_d_t_A[4848])
+        print("A_NR", A_NR)
+        print("V_vent_l_NR_d_t[4848]", V_vent_l_NR_d_t[4848])
+        print("V_dash_supply_A[4848]", V_dash_supply_d_t_A[4848])
+        print("U_prt", U_prt)
+        print("A_prt_A", A_prt_A)
+        print("L_H_NR_A[4848]", L_H_NR_d_t_A[4848])
+        print("L_CS_NR_A[4848]", L_CS_NR_d_t_A[4848])
+        print("Theta_uf_d_t[4848]", Theta_uf_d_t[4848])
+        print("HCM[4848]", HCM[4848])
+
         Theta_star_NR_d_t = np.vectorize(jjj_ufac.get_Theta_star_NR)
         Theta_star_NR_d_t  \
             = Theta_star_NR_d_t(
