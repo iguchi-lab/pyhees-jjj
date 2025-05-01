@@ -63,7 +63,7 @@ def get_Theta_star_NR(
             Theta_star_NR  \
                 = (k1 * Theta_star_HBR  \
                    + k2 * Theta_uf  \
-                   - L_CS_NR_A * 1e+6 / 3600)  \
+                   + L_CS_NR_A * 1e+6 / 3600)  \       #冷房計算の符号を修正　250501 IGUCHI
                 / (k1 + k2)
             return Theta_star_NR
 
