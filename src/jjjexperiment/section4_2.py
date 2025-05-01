@@ -1009,6 +1009,17 @@ def calc_Q_UT_A(case_name, A_A, A_MR, A_OR, r_env, mu_H, mu_C, q_hs_rtd_H, q_hs_
 
         # 実行条件: 床下新空調ロジックのみ
         if app_config.new_ufac_flg == 床下空調ロジック.変更する.value:
+            print("region", region)
+            print("A_A", A_A)
+            print("A_MR", A_MR)
+            print("A_OR", A_OR)
+            print("Q", Q)
+            print("r_A_ufvnt", r_A_ufac)
+            print("Theta_hs_out_d_t[4848]", Theta_hs_out_d_t[4848]) 
+            print("Theta_ex_d_t[4848]", Theta_ex_d_t[4848]) 
+            print("np.sum(V_dash_supply_d_t_i[:2, :], axis=0)[4848]", np.sum(V_dash_supply_d_t_i[:2, :], axis=0)[4848])
+            print("L_dash_H_R_d_t_i[4848]", L_dash_H_R_d_t_i[:,4848])
+            print("L_dash_CS_R_d_t_i[4848]", L_dash_CS_R_d_t_i[:,4848])   
             # θuf の本計算
             Theta_uf_d_t, Theta_g_surf_d_t, *others  \
                 = algo.calc_Theta(  # 新床下空調-2nd
@@ -1029,6 +1040,8 @@ def calc_Q_UT_A(case_name, A_A, A_MR, A_OR, r_env, mu_H, mu_C, q_hs_rtd_H, q_hs_
                     calc_backwards = False,  # ここでは θuf の従来計算のみ
                     di = di)
 
+            print("Theta_uf_d_t[4848]", Theta_uf_d_t[4848])
+                    
             # 床下・床上の熱貫流分だけ 目標床下温度からわずかな中和がある
             Theta_supply_d_t_i  \
                 = np.vstack([
