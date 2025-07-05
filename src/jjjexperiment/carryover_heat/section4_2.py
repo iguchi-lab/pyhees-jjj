@@ -172,7 +172,9 @@ def get_Theta_HBR_i_2023(
     # 熱容量(居室) [J/K]
     cbri = jjj_carryover_heat.get_C_BR_i(A_HCZ_i)
 
-    carryover_theta_diff = np.abs(Theta_HBR_before_i - Theta_star_HBR)
+    # NOTE: 250625 梅本様より絶対値を外すよう指摘に対応しました
+    carryover_theta_diff = Theta_HBR_before_i - Theta_star_HBR
+
     # 熱繰越による熱容量[J] (1/1/0:00 なしとする)
     carryover_capacity = 0 if isFirst else cbri * carryover_theta_diff
 
