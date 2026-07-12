@@ -86,7 +86,7 @@ def get_Theta_NR(
         A_prt_i: Array5x1,
         Q: float,
         Theta_uf: float,
-        r_A_NR_1F_excl_bath: float  # 非居室の1F(浴室除く)面積比 [-]
+        r_A_NR_1F: float
     ) -> float:
     """単時点版 (48a)(48b) 床下空調 補正アリ
     """
@@ -110,7 +110,7 @@ def get_Theta_NR(
 
     # (48b) [J/(K・s)]
     # Only the first-floor non-room area in contact with the underfloor space.
-    A_s_ufvnt_NR = A_NR * r_A_NR_1F_excl_bath
+    A_s_ufvnt_NR = A_NR * r_A_NR_1F
 
     k_evp = (Q - 0.35 * 0.5 * 2.4) * A_NR + c_p_air * rho_air * (V_vent_l_NR / 3600)
     # (48a)

@@ -18,21 +18,24 @@ def get_r_A_uf_i() -> Array12x1:
     return r_A_uf_i
 
 
-def get_r_A_NR_uf_1F_excl_bath() -> float:
-    """非居室の床下から貫流する部分の面積の割合 (1F・浴室除く) [-]
+def get_r_A_NR_uf_1F() -> float:
+    '''Return the ratio of first-floor non-room area contacting underfloor air.
 
-    非居室ゾーン(i=6~12)のうち床下空間に接するゾーン(i=6,7,9)の有効面積合計と
-    標準住戸の非居室合計面積の比率。ゾーン8(浴室)は除外する。
-    この値は住戸面積(A_A, A_MR, A_OR)には依存しない構造定数。
-
-    Returns:
-        float: 非居室の1F(浴室除く)面積比 (≈ 0.404)
-    """
-    # 1F NR有効面積 (浴室=ゾーン8 を除く)
-    A_NR_1F_excl_bath = sum(algo.get_r_A_uf_i(i) * get_A_HCZ_R_i(i) for i in [6, 7, 9])
+    Zones 6, 7, 8, and 9 contact the underfloor space. Zone 9 uses its
+    partial contact ratio. The standard-area ratio is invariant when all
+    non-room zones are scaled to the dwelling non-room area.
+    '''
+    A_NR_1F = sum(algo.get_r_A_uf_i(i) * get_A_HCZ_R_i(i) for i in [6, 7, 8, 9])
     # 標準住戸の非居室合計面積
     A_NR_R = sum(get_A_HCZ_R_i(i) for i in range(6, 13))
-    return A_NR_1F_excl_bath / A_NR_R
+    return A_NR_1F / A_NR_R
+
+
+def calc_L_flr1st_d_t(L_d_t_i: np.ndarray, cooling: bool) -> np.ndarray:
+    '''Return the first-floor load using each zone underfloor contact ratio.'''
+    assert L_d_t_i.shape == (12, 24 * 365)
+    load = np.sum(get_r_A_uf_i() * L_d_t_i, axis=0)
+    return -load if cooling else load
 
 
 def get_A_s_ufac_i(
@@ -160,7 +163,7 @@ def calc_delta_L_uf2outdoor(
         L_uf: 土間床等の外気に接する床の周辺部の長さ [m]
         delta_Theta: 床下空間と外気の温度差 [℃]
     """
-    return phi * L_uf * np.abs(delta_Theta) * 3.6 / 1000  # [W] -> [MJ/h]
+    return phi * L_uf * delta_Theta * 3.6 / 1000  # [W] -> [MJ/h]
 
 
 def calc_delta_L_uf2gnd(

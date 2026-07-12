@@ -17,7 +17,7 @@ def get_Theta_star_NR(
         Theta_NR: float,
         Theta_uf: float,
         HCM: JJJ_HCM,  # regionの代替
-        r_A_NR_1F_excl_bath: float  # 非居室の1F(浴室除く)面積比 [-]
+        r_A_NR_1F: float
     ) -> float:
     """(52-1)(52-2)(52-3)
     Args:
@@ -44,7 +44,7 @@ def get_Theta_star_NR(
     U_s = dc.get_U_s()  # U_s_vert でないチェック済み
 
     # Only the first-floor non-room area in contact with the underfloor space.
-    A_s_ufvnt_NR = A_NR * r_A_NR_1F_excl_bath
+    A_s_ufvnt_NR = A_NR * r_A_NR_1F
 
     k1 = (Q - 0.35 * 0.5 * 2.4) * A_NR \
         + c_p_air * rho_air * V_vent_l_NR / 3600  \

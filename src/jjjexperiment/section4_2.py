@@ -278,7 +278,6 @@ def calc_Q_UT_A(
     # (40)-1st 熱源機の風量を計算するための熱源機の出力
     Q_hat_hs_d_t, Q_hat_hs_CS_d_t = dc.calc_Q_hat_hs_d_t(skin.Q, house.A_A, V_vent_l_d_t, V_vent_g_i, skin.mu_H, skin.mu_C, J_d_t, q_gen_d_t, n_p_d_t, q_p_H,
                                      q_p_CS, q_p_CL, X_ex_d_t, w_gen_d_t, Theta_ex_d_t, L_wtr, house.region)
-    Q_hat_hs_base_d_t = Q_hat_hs_d_t.copy()
     df_output['Q_hat_hs_d_t'] = Q_hat_hs_d_t
 
     # (39)　熱源機の最低風量
@@ -318,7 +317,9 @@ def calc_Q_UT_A(
     Phi_A_0 = 0.025504994
     # 地盤の不易層温度と助走計算による吸熱応答成分の合計 (床下→地盤 熱損失計算用)
     # Theta_ex_d_t に依存するが ループ内では変わらないため事前に計算する
-    Theta_g_avg = algo.get_Theta_g_avg(Theta_ex_d_t)
+    Theta_g_avg = climate.get_Theta_g_avg()
+    # The underfloor correction below needs the season masks even when CAV is off.
+    H, C, M = dc.get_season_array_d_t(house.region)
     # 脱出条件:
     should_be_adjusted_Q_hat_hs_d_t = new_ufac.new_ufac_flg == 床下空調ロジック.変更する
     while True:
@@ -377,7 +378,7 @@ def calc_Q_UT_A(
         # 1. 床下 -> 居室全体 (目標方向の熱移動)
         #260112 IGUCHI 床の熱貫流率は、入力値を使う！
         U_s_input = new_ufac.U_s_vert  # 床板(床チャンバー上面)の熱貫流率 [W/(m2・K)]
-        A_s_ufac_i, r_A_s_ufac = jjj_ufac_dc.get_A_s_ufac_i(house.A_A, house.A_MR, house.A_OR)
+        A_s_ufac_i, _ = jjj_ufac_dc.get_A_s_ufac_i(house.A_A, house.A_MR, house.A_OR)
         U_s_vert_load = algo.get_U_s_vert(house.region, skin.Q)
         #260112 IGUCHI デバッグ用
         #print("Q_hat_hs_d_t[0]: ", Q_hat_hs_d_t[0])
@@ -399,9 +400,13 @@ def calc_Q_UT_A(
         # 一階負荷 暖冷房
         match ac_setting:
             case HeatingAcSetting():
-                L_d_t_flr1st = r_A_s_ufac * np.sum(load.L_H_d_t_i, axis=0)
+                L_d_t_flr1st = jjj_ufac_dc.calc_L_flr1st_d_t(
+                    load.L_H_d_t_i, cooling=False
+                )
             case CoolingAcSetting():
-                L_d_t_flr1st = -r_A_s_ufac * Q_hat_hs_base_d_t
+                L_d_t_flr1st = jjj_ufac_dc.calc_L_flr1st_d_t(
+                    load.L_CS_d_t_i, cooling=True
+                )
                 # NOTE[井口_250501]: 一階冷房負荷は顕熱のみ
             case _:
                 raise ValueError
@@ -431,15 +436,28 @@ def calc_Q_UT_A(
         #print("V_dash_supply_flr1st_d_t[0]:", V_dash_supply_flr1st_d_t[0])
         #print("Theta_uf_d_t[0] 床下温度: ", Theta_uf_d_t[0])
 
+        natural_Theta_uf_d_t = algo.get_Theta_uf_d_t_runup(
+            skin.underfloor_insulation, Theta_ex_d_t
+        )
+        active_mask = H if isinstance(ac_setting, HeatingAcSetting) else C
+        Theta_uf_d_t = np.where(active_mask, Theta_uf_d_t, natural_Theta_uf_d_t)
         sum_Theta_dash_g_surf_A_m = calc_sum_Theta_dash_g_surf_A_m_d_t(
-            Theta_uf_d_t, Theta_ex_d_t, skin.underfloor_insulation
+            Theta_uf_d_t, Theta_ex_d_t, skin.underfloor_insulation,
+            Theta_g_avg=Theta_g_avg
         )
         L_uf = algo.get_L_uf(np.sum(A_s_ufac_i))
         phi = climate.get_phi(skin.Q)
 
         delta_L_uf2outdoor_d_t = np.vectorize(jjj_ufac_dc.calc_delta_L_uf2outdoor)
-        delta_L_uf2outdoor_d_t  \
-            = delta_L_uf2outdoor_d_t(phi, L_uf, (Theta_uf_d_t - Theta_ex_d_t))
+        delta_Theta_uf2outdoor_d_t = (
+            Theta_uf_d_t - Theta_ex_d_t
+            if isinstance(ac_setting, HeatingAcSetting)
+            else Theta_ex_d_t - Theta_uf_d_t
+        )
+        delta_L_uf2outdoor_d_t = delta_L_uf2outdoor_d_t(
+            phi, L_uf, delta_Theta_uf2outdoor_d_t
+        )
+        delta_L_uf2outdoor_d_t = np.where(active_mask, delta_L_uf2outdoor_d_t, 0.0)
         assert np.shape(delta_L_uf2outdoor_d_t) == (24 * 365,)
         Q_hat_hs_d_t += delta_L_uf2outdoor_d_t
 
@@ -454,6 +472,7 @@ def calc_Q_UT_A(
         delta_L_uf2gnd_d_t = \
             delta_L_uf2gnd_d_t(q_hs_rtd_H(), q_hs_rtd_C(),
                 A_s_ufac_A, jjj_consts.R_g, Phi_A_0, Theta_uf_d_t, sum_Theta_dash_g_surf_A_m, Theta_g_avg)
+        delta_L_uf2gnd_d_t = np.where(active_mask, delta_L_uf2gnd_d_t, 0.0)
         Q_hat_hs_d_t += delta_L_uf2gnd_d_t
 
         #260112 IGUCHI デバッグ用
@@ -494,7 +513,7 @@ def calc_Q_UT_A(
         A_prt_A = np.sum(A_prt_i)
         HCM = np.array(climate.get_HCM_d_t())
 
-        r_A_NR_uf_1F_excl_bath = jjj_ufac_dc.get_r_A_NR_uf_1F_excl_bath()
+        r_A_NR_uf_1F = jjj_ufac_dc.get_r_A_NR_uf_1F()
 
         #デバッグ用 250501 IGUCHI
         #print("Theta_in_d_t[4848]", Theta_in_d_t[4848])
@@ -527,7 +546,7 @@ def calc_Q_UT_A(
                 Theta_NR = Theta_in_d_t,  # この時点では仮置きの値を使用⇒夏期は27℃とする必要がある　250501 井口
                 Theta_uf = Theta_uf_d_t,  # (8760,)
                 HCM = HCM,  # (8760,)
-                r_A_NR_1F_excl_bath = r_A_NR_uf_1F_excl_bath
+                r_A_NR_1F = r_A_NR_uf_1F
             )
         #print("Theta_star_HBR[0]: ", Theta_star_HBR_d_t[0])
         #print("Q: ", skin.Q)
@@ -1195,7 +1214,7 @@ def calc_Q_UT_A(
                     A_prt_i = A_prt_i.reshape(-1,1),
                     Q = skin.Q,
                     Theta_uf = Theta_uf_d_t[t],
-                    r_A_NR_1F_excl_bath = r_A_NR_uf_1F_excl_bath
+                    r_A_NR_1F = r_A_NR_uf_1F
                 ) for t in range(24*365)
             ])
         else:

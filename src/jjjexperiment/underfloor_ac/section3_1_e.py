@@ -120,11 +120,17 @@ def calc_Theta_uf_d_t_2023(L_star_H_d_t_i, L_star_CS_d_t_i, A_A, A_MR, A_OR, r_A
     return Theta_uf_d_t
 
 
-def calc_sum_Theta_dash_g_surf_A_m_d_t(Theta_uf_d_t, Theta_ex_d_t, underfloor_insulation):
+def calc_sum_Theta_dash_g_surf_A_m_d_t(
+        Theta_uf_d_t,
+        Theta_ex_d_t,
+        underfloor_insulation,
+        Theta_g_avg=None,
+    ):
     '''Return the hourly Appendix E ground-response sum after annual run-up.'''
     R_g = getattr(jjj_consts, 'R_g', 0.15)
     Phi_A_0 = 0.025504994
-    Theta_g_avg = algo.get_Theta_g_avg(Theta_ex_d_t)
+    if Theta_g_avg is None:
+        Theta_g_avg = algo.get_Theta_g_avg(Theta_ex_d_t)
     phi_1_A_m = np.array([algo.get_phi_1_A_m(m) for m in range(1, 11)])
     r_m = np.array([algo.get_r_m(m) for m in range(1, 11)])
     runup = algo.get_Theta_uf_d_t_runup(underfloor_insulation, Theta_ex_d_t)

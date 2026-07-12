@@ -1,7 +1,7 @@
 import pytest
 
 from jjjexperiment.common import JJJ_HCM
-from jjjexperiment.underfloor_ac.section4_2 import get_r_A_NR_uf_1F_excl_bath
+from jjjexperiment.underfloor_ac.section4_2 import get_r_A_NR_uf_1F
 from jjjexperiment.underfloor_ac.section4_2_f52 import get_Theta_star_NR
 
 @pytest.mark.xfail(reason="260323_井口先生よりロジック修正中のため")
@@ -25,7 +25,7 @@ class Test式52負荷バランス時非居室室温:
             Theta_NR=20.0,          # 非居室温度
             Theta_uf=31.2,          # 床下空調温度
             HCM=JJJ_HCM.H,          # 暖冷房区画の熱容量
-            r_A_NR_1F_excl_bath=get_r_A_NR_uf_1F_excl_bath()
+            r_A_NR_1F=get_r_A_NR_uf_1F()
         )
         # Assert
         assert result == pytest.approx(25.4, abs=1e-1)  # 25.4 -> 18.6
@@ -47,7 +47,7 @@ class Test式52負荷バランス時非居室室温:
             Theta_NR=20.0,          # 非居室温度
             Theta_uf=23.2,          # 床下空調温度
             HCM=JJJ_HCM.H,          # 暖冷房区画の熱容量
-            r_A_NR_1F_excl_bath=get_r_A_NR_uf_1F_excl_bath()
+            r_A_NR_1F=get_r_A_NR_uf_1F()
         )
         # Assert
         assert result == pytest.approx(19.4, abs=1e-1)  # 19.4 -> 17.8
@@ -69,7 +69,7 @@ class Test式52負荷バランス時非居室室温:
             Theta_NR=27.0,          # 非居室温度
             Theta_uf=24.3,          # 床下空調温度
             HCM=JJJ_HCM.C,          # 暖冷房区画の熱容量
-            r_A_NR_1F_excl_bath=get_r_A_NR_uf_1F_excl_bath()
+            r_A_NR_1F=get_r_A_NR_uf_1F()
         )
         # Assert
         assert result == pytest.approx(26.3, abs=1e-1)  # 26.3 -> 27.1
