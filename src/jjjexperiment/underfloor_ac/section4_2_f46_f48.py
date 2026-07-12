@@ -109,8 +109,8 @@ def get_Theta_NR(
     # NOTE: VAVなしのとき V',supply=V,supply -> k',prt,i=k,prt,i
 
     # (48b) [J/(K・s)]
-    A_s_ufvnt_NR = A_NR
-    # Excel benchmark applies the full non-room area at this stage.
+    # Only the first-floor non-room area in contact with the underfloor space.
+    A_s_ufvnt_NR = A_NR * r_A_NR_1F_excl_bath
 
     k_evp = (Q - 0.35 * 0.5 * 2.4) * A_NR + c_p_air * rho_air * (V_vent_l_NR / 3600)
     # (48a)

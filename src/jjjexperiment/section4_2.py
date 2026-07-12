@@ -43,7 +43,6 @@ import jjjexperiment.underfloor_ac.section4_2 as jjj_ufac_dc
 from jjjexperiment.underfloor_ac.section3_1_e import (
     calc_Theta_uf_d_t_2023,
     calc_sum_Theta_dash_g_surf_A_m_d_t,
-    GROUND_RESPONSE_SUM_COOLING_EXCEL,
 )
 from jjjexperiment.underfloor_ac.section4_2_f52 import get_Theta_star_NR
 from jjjexperiment.underfloor_ac.section4_2_f46_f48 import get_Theta_HBR_i, get_Theta_NR
@@ -432,14 +431,9 @@ def calc_Q_UT_A(
         #print("V_dash_supply_flr1st_d_t[0]:", V_dash_supply_flr1st_d_t[0])
         #print("Theta_uf_d_t[0] 床下温度: ", Theta_uf_d_t[0])
 
-        if isinstance(ac_setting, HeatingAcSetting):
-            sum_Theta_dash_g_surf_A_m = calc_sum_Theta_dash_g_surf_A_m_d_t(
-                Theta_uf_d_t, Theta_ex_d_t, skin.underfloor_insulation
-            )
-        else:
-            sum_Theta_dash_g_surf_A_m = np.full(
-                24 * 365, GROUND_RESPONSE_SUM_COOLING_EXCEL
-            )
+        sum_Theta_dash_g_surf_A_m = calc_sum_Theta_dash_g_surf_A_m_d_t(
+            Theta_uf_d_t, Theta_ex_d_t, skin.underfloor_insulation
+        )
         L_uf = algo.get_L_uf(np.sum(A_s_ufac_i))
         phi = climate.get_phi(skin.Q)
 

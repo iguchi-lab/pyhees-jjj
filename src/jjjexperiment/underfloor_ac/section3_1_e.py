@@ -120,12 +120,6 @@ def calc_Theta_uf_d_t_2023(L_star_H_d_t_i, L_star_CS_d_t_i, A_A, A_MR, A_OR, r_A
     return Theta_uf_d_t
 
 
-# Mean cooling response reconstructed from the Excel corrected-load and
-# underfloor-temperature series. Keep this separate from the formal Appendix E
-# response so that the remaining Excel/specification difference is explicit.
-GROUND_RESPONSE_SUM_COOLING_EXCEL = 9.394
-
-
 def calc_sum_Theta_dash_g_surf_A_m_d_t(Theta_uf_d_t, Theta_ex_d_t, underfloor_insulation):
     '''Return the hourly Appendix E ground-response sum after annual run-up.'''
     R_g = getattr(jjj_consts, 'R_g', 0.15)
