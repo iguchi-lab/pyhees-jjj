@@ -42,9 +42,8 @@ import jjjexperiment.carryover_heat as jjj_carryover_heat
 import jjjexperiment.underfloor_ac.section4_2 as jjj_ufac_dc
 from jjjexperiment.underfloor_ac.section3_1_e import (
     calc_Theta_uf_d_t_2023,
-    calc_sum_Theta_dash_g_surf_A_m_runup,
-    THETA_UF_WARM,
-    THETA_UF_COOL,
+    calc_sum_Theta_dash_g_surf_A_m_d_t,
+    GROUND_RESPONSE_SUM_COOLING_EXCEL,
 )
 from jjjexperiment.underfloor_ac.section4_2_f52 import get_Theta_star_NR
 from jjjexperiment.underfloor_ac.section4_2_f46_f48 import get_Theta_HBR_i, get_Theta_NR
@@ -280,6 +279,7 @@ def calc_Q_UT_A(
     # (40)-1st 熱源機の風量を計算するための熱源機の出力
     Q_hat_hs_d_t, Q_hat_hs_CS_d_t = dc.calc_Q_hat_hs_d_t(skin.Q, house.A_A, V_vent_l_d_t, V_vent_g_i, skin.mu_H, skin.mu_C, J_d_t, q_gen_d_t, n_p_d_t, q_p_H,
                                      q_p_CS, q_p_CL, X_ex_d_t, w_gen_d_t, Theta_ex_d_t, L_wtr, house.region)
+    Q_hat_hs_base_d_t = Q_hat_hs_d_t.copy()
     df_output['Q_hat_hs_d_t'] = Q_hat_hs_d_t
 
     # (39)　熱源機の最低風量
@@ -320,15 +320,6 @@ def calc_Q_UT_A(
     # 地盤の不易層温度と助走計算による吸熱応答成分の合計 (床下→地盤 熱損失計算用)
     # Theta_ex_d_t に依存するが ループ内では変わらないため事前に計算する
     Theta_g_avg = algo.get_Theta_g_avg(Theta_ex_d_t)
-    match ac_setting:
-        # 260112 IGUCHI 指定温度での助走暫定値を使用
-        case HeatingAcSetting():
-            sum_Theta_dash_g_surf_A_m = calc_sum_Theta_dash_g_surf_A_m_runup(THETA_UF_WARM, Theta_g_avg)  # 11.2224
-        case CoolingAcSetting():
-            sum_Theta_dash_g_surf_A_m = calc_sum_Theta_dash_g_surf_A_m_runup(THETA_UF_COOL, Theta_g_avg)  # 9.15940
-        case _:
-            raise ValueError
-
     # 脱出条件:
     should_be_adjusted_Q_hat_hs_d_t = new_ufac.new_ufac_flg == 床下空調ロジック.変更する
     while True:
@@ -388,13 +379,14 @@ def calc_Q_UT_A(
         #260112 IGUCHI 床の熱貫流率は、入力値を使う！
         U_s_input = new_ufac.U_s_vert  # 床板(床チャンバー上面)の熱貫流率 [W/(m2・K)]
         A_s_ufac_i, r_A_s_ufac = jjj_ufac_dc.get_A_s_ufac_i(house.A_A, house.A_MR, house.A_OR)
+        U_s_vert_load = algo.get_U_s_vert(house.region, skin.Q)
         #260112 IGUCHI デバッグ用
         #print("Q_hat_hs_d_t[0]: ", Q_hat_hs_d_t[0])
         assert A_s_ufac_i.ndim == 2
         delta_L_room2uf_d_t_i  \
             = np.hstack([
                 jjj_ufac_dc.calc_delta_L_room2uf_i(
-                    new_ufac.U_s_floor_ins,
+                    U_s_vert_load,
                     A_s_ufac_i,
                     np.abs(Theta_ex_d_t[t] - Theta_in_d_t[t])
                 ) for t in range(24*365)  # 各要素が shape(12,1)
@@ -408,9 +400,9 @@ def calc_Q_UT_A(
         # 一階負荷 暖冷房
         match ac_setting:
             case HeatingAcSetting():
-                L_d_t_flr1st = 1 * r_A_s_ufac * np.sum(load.L_H_d_t_i, axis=0)
+                L_d_t_flr1st = r_A_s_ufac * np.sum(load.L_H_d_t_i, axis=0)
             case CoolingAcSetting():
-                L_d_t_flr1st = -1 * r_A_s_ufac * np.sum(load.L_CS_d_t_i, axis=0)
+                L_d_t_flr1st = -r_A_s_ufac * Q_hat_hs_base_d_t
                 # NOTE[井口_250501]: 一階冷房負荷は顕熱のみ
             case _:
                 raise ValueError
@@ -425,7 +417,7 @@ def calc_Q_UT_A(
                     L_d_t_flr1st[t],
                     np.sum(A_s_ufac_i),
                     U_s_input,
-                    new_ufac.U_s_floor_ins,
+                    U_s_vert_load,
                     Theta_in_d_t[t], Theta_ex_d_t[t],
                     V_dash_supply_flr1st_d_t[t]
                 ) for t in range(24*365)
@@ -440,6 +432,14 @@ def calc_Q_UT_A(
         #print("V_dash_supply_flr1st_d_t[0]:", V_dash_supply_flr1st_d_t[0])
         #print("Theta_uf_d_t[0] 床下温度: ", Theta_uf_d_t[0])
 
+        if isinstance(ac_setting, HeatingAcSetting):
+            sum_Theta_dash_g_surf_A_m = calc_sum_Theta_dash_g_surf_A_m_d_t(
+                Theta_uf_d_t, Theta_ex_d_t, skin.underfloor_insulation
+            )
+        else:
+            sum_Theta_dash_g_surf_A_m = np.full(
+                24 * 365, GROUND_RESPONSE_SUM_COOLING_EXCEL
+            )
         L_uf = algo.get_L_uf(np.sum(A_s_ufac_i))
         phi = climate.get_phi(skin.Q)
 
@@ -469,6 +469,7 @@ def calc_Q_UT_A(
         # 補正完了した Q^hs を使って V'supply を再計算する
         should_be_adjusted_Q_hat_hs_d_t = False
 
+    df_output['Q_hat_hs_d_t_ufac'] = Q_hat_hs_d_t
     df_output2['r_supply_des_i'] = r_supply_des_i
     df_output = df_output.assign(
         r_supply_des_d_t_1 = r_supply_des_d_t_i[0],
@@ -859,7 +860,7 @@ def calc_Q_UT_A(
             # 部屋→床下への熱移動分が戻ってくるため負荷控除する
             delta_L_uf2room_d_t_i = np.hstack([
                 jjj_ufac_dc.calc_delta_L_room2uf_i(
-                    new_ufac.U_s_floor_ins,
+                    U_s_vert_load,
                     A_s_ufac_i,
                     np.abs(Theta_star_HBR_d_t[t] - Theta_ex_d_t[t])
                 ) for t in range(24*365)
@@ -868,7 +869,7 @@ def calc_Q_UT_A(
             # (9)-補正
             Cf = np.logical_and(C, load.L_CS_d_t_i[:5, :] > 0)
             assert Cf.shape == (5, 24*365)
-            L_star_CS_d_t_i[Cf] -= delta_L_uf2room_d_t_i[:5, :][Cf]
+            L_star_CS_d_t_i[Cf] += delta_L_uf2room_d_t_i[:5, :][Cf]
             # (8)-補正
             Hf = np.logical_and(H, load.L_H_d_t_i[:5, :] > 0)
             assert Hf.shape == (5, 24*365)
@@ -1173,7 +1174,8 @@ def calc_Q_UT_A(
                     L_star_CS_i = L_star_CS_d_t_i[:, t:t+1],
                     HCM = HCM[t],
                     A_s_ufac_i = A_s_ufac_i[:5, :],
-                    Theta_uf = Theta_uf_d_t[t]
+                    Theta_uf = Theta_uf_d_t[t],
+                    U_s_override = 0.0  # Excel benchmark omits the direct floor term here.
                 ) for t in range(24*365)
             ])
         else:

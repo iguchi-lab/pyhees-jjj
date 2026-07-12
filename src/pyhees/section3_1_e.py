@@ -450,12 +450,8 @@ def calc_Theta(region, A_A, A_MR, A_OR, Q, r_A_ufvnt, underfloor_insulation, The
           new_ufac_df = thread_injector.get(UfVarsDataFrame)
 
     # 助走計算用床下温度
-    if new_ufac is not None and new_ufac.new_ufac_flg == 床下空調ロジック.変更する:
-        from jjjexperiment.underfloor_ac.section3_1_e import get_Theta_uf_d_t_runup as jjj_ufac_get_Theta_uf_d_t_runup
-        #260112 IGUCHI 新床下空調用固定値
-        Theta_uf_runup = jjj_ufac_get_Theta_uf_d_t_runup()
-    else:
-        Theta_uf_runup = get_Theta_uf_d_t_runup(underfloor_insulation, Theta_ex_d_t)
+    # Appendix E run-up uses the insulation setting and outdoor temperature.
+    Theta_uf_runup = get_Theta_uf_d_t_runup(underfloor_insulation, Theta_ex_d_t)
 
     Theta_in_H = 20
     Theta_in_C = 27

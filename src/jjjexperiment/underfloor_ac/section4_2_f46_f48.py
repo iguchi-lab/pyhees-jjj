@@ -21,6 +21,7 @@ def get_Theta_HBR_i(
         HCM: JJJ_HCM,
         A_s_ufac_i: Array5x1,
         Theta_uf: float,
+        U_s_override: float = None,
     ) -> Array5x1:
     """単時点版 (46-1)(46-2)(46-3) の床下空調 補正
     """
@@ -38,6 +39,9 @@ def get_Theta_HBR_i(
     assert CRV.shape == (5, 1), '想定外の行列数'
 
     U_s = dc.get_U_s()  # U_s_vert でないチェック済み
+
+    if U_s_override is not None:
+        U_s = U_s_override
 
     match HCM:
         # 暖房期 (46-1)
@@ -105,10 +109,10 @@ def get_Theta_NR(
     # NOTE: VAVなしのとき V',supply=V,supply -> k',prt,i=k,prt,i
 
     # (48b) [J/(K・s)]
-    #IGUCHI: 床下から非居室に貫流する面積は1階のみ
-    A_NR_1F = A_NR * r_A_NR_1F_excl_bath
+    A_s_ufvnt_NR = A_NR
+    # Excel benchmark applies the full non-room area at this stage.
 
-    k_evp = (Q - 0.35 * 0.5 * 2.4) * A_NR_1F + c_p_air * rho_air * (V_vent_l_NR / 3600)
+    k_evp = (Q - 0.35 * 0.5 * 2.4) * A_NR + c_p_air * rho_air * (V_vent_l_NR / 3600)
     # (48a)
     U_s = dc.get_U_s()  # U_s_vert でないチェック済み
 
@@ -121,14 +125,13 @@ def get_Theta_NR(
     #       + U_s * A_NR
     #       + k_prt_A)
 
-    #床下から非居室に貫流する面積は1階のみ　A_NR * r_A_NR_1F_excl_bath
     Theta_NR  \
         = ((k_evp + k_prt_A) * Theta_star_NR  \
-            + U_s * A_NR_1F * Theta_uf  \
+            + U_s * A_s_ufvnt_NR * Theta_uf  \
             - k_dash_prt_A * (Theta_star_HBR - Theta_star_NR)  \
             + np.sum(k_prt_i * (Theta_HBR_i - Theta_star_NR)))  \
         / (k_evp
-           + U_s * A_NR_1F
+           + U_s * A_s_ufvnt_NR
            + k_prt_A)
 
     # NOTE: 非床下空調の式は定義しない(オリジナルを使用)
