@@ -75,6 +75,22 @@ VHS_DSGN_C = NewType('VHS_DSGN_C', float)
 class ActiveAcSetting:
     load: HeatingAcSetting | CoolingAcSetting
 
+
+def combine_corrected_cooling_output(
+        Q_hat_hs_base_d_t: np.ndarray,
+        Q_hat_hs_CS_base_d_t: np.ndarray,
+        Q_hat_hs_adjusted_d_t: np.ndarray) -> np.ndarray:
+    """床下による顕熱補正後の出力へ、補正前の潜熱出力を加える。"""
+    delta_Q_hat_hs_CS_d_t = Q_hat_hs_adjusted_d_t - Q_hat_hs_base_d_t
+    Q_hat_hs_CS_adjusted_d_t = np.clip(
+        Q_hat_hs_CS_base_d_t + delta_Q_hat_hs_CS_d_t, 0, None
+    )
+    Q_hat_hs_CL_base_d_t = np.clip(
+        Q_hat_hs_base_d_t - Q_hat_hs_CS_base_d_t, 0, None
+    )
+    return Q_hat_hs_CS_adjusted_d_t + Q_hat_hs_CL_base_d_t
+
+
 # NOTE: section4_2 の同名の関数の改変版
 @jjj_cloning
 @inject
@@ -427,21 +443,7 @@ def calc_Q_UT_A(
                 jjj_ufac_dc.calc_Theta_uf(q_hs_rtd_H(), q_hs_rtd_C(),
                     L_d_t_flr1st[t],
                     A_s_ufac_HCZ_1F,
-                    U_s_supply,
-                    U_s_load,
-                    Theta_in_d_t[t], Theta_ex_d_t[t],
-                    V_dash_supply_flr1st_d_t[t]
-                ) for t in range(24*365)
-            ])
-
-        #260112 IGUCHI デバッグ用
-        #print("L_d_t_flr1st[0]:", L_d_t_flr1st[0])
-        #print("np.sum(A_s_ufac_i):", np.sum(A_s_ufac_i))
-        #print("U_s_supply:", U_s_supply)
-        #print("Theta_in_d_t[0]:", Theta_in_d_t[0])
-        #print("Theta_ex_d_t[0]:", Theta_ex_d_t[0])
-        #print("V_dash_supply_flr1st_d_t[0]:", V_dash_supply_flr1st_d_t[0])
-        #print("Theta_uf_d_t[0] 床下…9218 tokens truncated…         # θuf の本計算
+                    …9476 tokens truncated…         # θuf の本計算
             Theta_uf_d_t, Theta_g_surf_d_t, *others  \
                 = algo.calc_Theta(  # 新床下空調-2nd
                     region = house.region,
