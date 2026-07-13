@@ -9,7 +9,8 @@ from jjjexperiment.underfloor_ac.section3_1_e import (
 from jjjexperiment.underfloor_ac.section4_2_f46_f48 import get_Theta_NR
 from jjjexperiment.underfloor_ac.section4_2_f52 import get_Theta_star_NR
 from jjjexperiment.underfloor_ac.section4_2 import (
-    calc_L_flr1st_d_t,
+    calc_L_flr1st_area_apportioned_d_t,
+    calc_Theta_uf,
     calc_delta_L_uf2outdoor,
     get_r_A_NR_uf_1F,
 )
@@ -20,12 +21,45 @@ def test_first_floor_non_room_area_includes_bathroom():
     assert 38.93 * get_r_A_NR_uf_1F() == pytest.approx(expected_area)
 
 
-def test_first_floor_load_uses_zone_contact_ratios():
-    loads = np.zeros((12, 24 * 365))
-    loads[:, 0] = 1.0
-    expected = sum([1.0, 1.0, 1.0, 1.0, 1.0, 0.8120754716981132])
-    assert calc_L_flr1st_d_t(loads, cooling=False)[0] == pytest.approx(expected)
-    assert calc_L_flr1st_d_t(loads, cooling=True)[0] == pytest.approx(-expected)
+def test_first_floor_load_uses_conditioned_area_ratio():
+    q_hat_hs = np.full(24 * 365, 18.526515768)
+    area_conditioned_first_floor = 46.37
+    area_conditioned_total = 81.15
+    expected = q_hat_hs[0] * area_conditioned_first_floor / area_conditioned_total
+
+    heating = calc_L_flr1st_area_apportioned_d_t(
+        q_hat_hs, area_conditioned_first_floor, area_conditioned_total, cooling=False
+    )
+    cooling = calc_L_flr1st_area_apportioned_d_t(
+        q_hat_hs, area_conditioned_first_floor, area_conditioned_total, cooling=True
+    )
+
+    assert heating[0] == pytest.approx(expected)
+    assert heating[0] == pytest.approx(10.5862542965)
+    assert cooling[0] == pytest.approx(-expected)
+
+
+def test_underfloor_temperature_uses_distinct_load_and_supply_u_values():
+    area_conditioned_first_floor = 46.37
+    u_load = 0.5422264459
+    u_supply = 2.223
+    theta_in = 20.0
+    theta_ex = 0.0
+    airflow = 500.0
+    load = 10.0
+
+    actual = calc_Theta_uf(
+        1.0, None, load, area_conditioned_first_floor,
+        u_supply, u_load, theta_in, theta_ex, airflow,
+    )
+
+    b = dc.get_ro_air() * 1.006 * airflow \
+        + u_supply * area_conditioned_first_floor * 3.6
+    original_floor_loss = (
+        u_load * area_conditioned_first_floor * (theta_in - theta_ex) * 0.7 * 3.6
+    )
+    expected = (load * 1e3 - original_floor_loss + theta_in * b) / b
+    assert actual == pytest.approx(expected)
 
 
 def test_outdoor_heat_transfer_preserves_direction():
@@ -120,3 +154,4 @@ def test_appendix_e_ground_response_uses_configured_ground_temperature():
         theta_uf, theta_ex, False, Theta_g_avg=18.0
     )
     assert not np.allclose(low, high)
+
