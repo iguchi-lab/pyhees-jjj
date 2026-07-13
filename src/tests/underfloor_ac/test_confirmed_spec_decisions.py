@@ -68,6 +68,22 @@ def test_outdoor_heat_transfer_preserves_direction():
     assert negative == pytest.approx(-positive)
 
 
+def test_formula_9_subtracts_partition_heat_transfer_for_cooling():
+    _, cooling, _ = dc.get_season_array_d_t(6)
+    t = np.flatnonzero(cooling)[0]
+    sensible_load = np.zeros((5, 24 * 365))
+    partition_heat_transfer = np.zeros((5, 24 * 365))
+    sensible_load[0, t] = 1.0
+    partition_heat_transfer[0, t] = -0.2
+
+    actual = dc.get_L_star_CS_d_t_i(
+        sensible_load, partition_heat_transfer, region=6
+    )
+
+    # Q* is negative when heat enters the conditioned room from the non-room.
+    assert actual[0, t] == pytest.approx(1.0 - (-0.2))
+
+
 def test_formula_52_uses_first_floor_contact_area():
     area_nr = 40.0
     contact_ratio = 0.4
