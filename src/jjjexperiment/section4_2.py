@@ -341,8 +341,8 @@ def calc_Q_UT_A(
                         raise Exception("どちらかのみを想定")
                     case (_, None):  # 暖房期(=q_hs_rtd_H) => 全熱負荷
                         V_dash_hs_supply_d_t = dc.get_V_dash_hs_supply_d_t_2023(Q_hat_hs_d_t, house.region, False)
-                    case (None, _):  # 冷房期(=q_hs_rtd_H) => 顕熱負荷のみ
-                        V_dash_hs_supply_d_t = dc.get_V_dash_hs_supply_d_t_2023(Q_hat_hs_CS_d_t, house.region, True)
+                    case (None, _):  # 冷房期: 式(40-2a)の顕熱＋潜熱出力を使用
+                        V_dash_hs_supply_d_t = dc.get_V_dash_hs_supply_d_t_2023(Q_hat_hs_d_t, house.region, True)
                     case (_, _):
                         raise Exception("どちらかのみを想定")
 
@@ -441,7 +441,7 @@ def calc_Q_UT_A(
         #print("Theta_in_d_t[0]:", Theta_in_d_t[0])
         #print("Theta_ex_d_t[0]:", Theta_ex_d_t[0])
         #print("V_dash_supply_flr1st_d_t[0]:", V_dash_supply_flr1st_d_t[0])
-        #print("Theta_uf_d_t[0] 床下温度: "…9216 tokens truncated…         # θuf の本計算
+        #print("Theta_uf_d_t[0] 床下…9218 tokens truncated…         # θuf の本計算
             Theta_uf_d_t, Theta_g_surf_d_t, *others  \
                 = algo.calc_Theta(  # 新床下空調-2nd
                     region = house.region,
