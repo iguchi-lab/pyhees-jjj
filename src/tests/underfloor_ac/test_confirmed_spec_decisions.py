@@ -3,6 +3,7 @@ import pytest
 
 import pyhees.section4_2 as dc
 from jjjexperiment.common import JJJ_HCM
+from jjjexperiment.section4_2 import combine_corrected_cooling_output
 from jjjexperiment.underfloor_ac.section3_1_e import (
     calc_sum_Theta_dash_g_surf_A_m_d_t,
 )
@@ -37,6 +38,22 @@ def test_first_floor_load_uses_conditioned_area_ratio():
     assert heating[0] == pytest.approx(expected)
     assert heating[0] == pytest.approx(10.5862542965)
     assert cooling[0] == pytest.approx(-expected)
+
+
+def test_cooling_output_adds_latent_after_sensible_underfloor_correction():
+    total_base = np.array([5.1308])
+    sensible_base = np.array([2.4613])
+    adjusted_total_before_component_clip = np.array([0.8917])
+
+    actual = combine_corrected_cooling_output(
+        total_base,
+        sensible_base,
+        adjusted_total_before_component_clip,
+    )
+
+    # 顕熱補正後は負値になるため0とし、補正前潜熱だけが残る。
+    expected_latent = total_base - sensible_base
+    np.testing.assert_allclose(actual, expected_latent)
 
 
 def test_underfloor_temperature_uses_distinct_load_and_supply_u_values():
