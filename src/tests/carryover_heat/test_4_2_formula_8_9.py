@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 import pyhees.section3_1 as ld
 # JJJ
@@ -38,8 +37,18 @@ def test_負荷バランス時の負荷_暖房_式8():
         "L_star_H_iの計算がおかしい"
 
 
-@pytest.mark.skip(reason="計算例が未提供のため")
 def test_負荷バランス時の負荷_冷房_式9():
     """(9) 過剰熱量繰越を考慮した 熱損失を含む負荷バランス時の冷房負荷
     """
-    pass
+    # 冷房時は非居室の方が高温となるため、居室から非居室への熱移動は負値。
+    L_CS_i = np.full((5, 1), 1.0)
+    Q_star_trs_prt_i = np.full((5, 1), -0.2)
+    carryover = np.full((5, 1), 0.1)
+
+    actual = jjj_carryover_heat.get_L_star_CS_i_2024(
+        True, L_CS_i, Q_star_trs_prt_i, carryover
+    )
+
+    # 1.0 - (-0.2) - 0.1 = 1.1 MJ/h
+    np.testing.assert_allclose(actual, np.full((5, 1), 1.1))
+
