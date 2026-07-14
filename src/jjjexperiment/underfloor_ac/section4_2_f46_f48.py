@@ -21,7 +21,6 @@ def get_Theta_HBR_i(
         HCM: JJJ_HCM,
         A_s_ufac_i: Array5x1,
         Theta_uf: float,
-        U_s_override: float = None,
     ) -> Array5x1:
     """単時点版 (46-1)(46-2)(46-3) の床下空調 補正
     """
@@ -39,9 +38,6 @@ def get_Theta_HBR_i(
     assert CRV.shape == (5, 1), '想定外の行列数'
 
     U_s = dc.get_U_s()  # U_s_vert でないチェック済み
-
-    if U_s_override is not None:
-        U_s = U_s_override
 
     match HCM:
         # 暖房期 (46-1)
