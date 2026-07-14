@@ -10,7 +10,10 @@ from jjjexperiment.section4_2 import (
 from jjjexperiment.underfloor_ac.section3_1_e import (
     calc_sum_Theta_dash_g_surf_A_m_d_t,
 )
-from jjjexperiment.underfloor_ac.section4_2_f46_f48 import get_Theta_NR
+from jjjexperiment.underfloor_ac.section4_2_f46_f48 import (
+    get_Theta_HBR_i,
+    get_Theta_NR,
+)
 from jjjexperiment.underfloor_ac.section4_2_f52 import get_Theta_star_NR
 from jjjexperiment.underfloor_ac.section4_2 import (
     calc_L_flr1st_area_apportioned_d_t,
@@ -177,6 +180,43 @@ def test_formula_48_uses_first_floor_contact_area():
         k_evp * theta_star_nr + k_floor * theta_uf
     ) / (k_evp + k_floor)
     assert actual == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "hcm,theta_star,theta_uf",
+    [
+        (JJJ_HCM.H, 20.0, 30.0),
+        (JJJ_HCM.C, 27.0, 20.0),
+    ],
+)
+def test_formula_46_uses_uninsulated_floor_heat_transfer(
+        hcm, theta_star, theta_uf):
+    zeros = np.zeros((5, 1))
+    floor_area = np.array([10.0, 0.0, 0.0, 0.0, 0.0]).reshape(-1, 1)
+    room_area = np.ones((5, 1))
+
+    actual = get_Theta_HBR_i(
+        Theta_star_HBR=theta_star,
+        V_supply_i=zeros,
+        Theta_supply_i=np.full((5, 1), theta_star),
+        U_prt=0.0,
+        A_prt_i=zeros,
+        Q=1.0,
+        A_HCZ_i=room_area,
+        L_star_H_i=zeros,
+        L_star_CS_i=zeros,
+        HCM=hcm,
+        A_s_ufac_i=floor_area,
+        Theta_uf=theta_uf,
+    )
+
+    k_floor = dc.get_U_s() * floor_area[0, 0]
+    expected_zone1 = theta_star + (
+        k_floor * (theta_uf - theta_star) / (1.0 + k_floor)
+    )
+    assert dc.get_U_s() == pytest.approx(2.223)
+    assert actual[0, 0] == pytest.approx(expected_zone1)
+    np.testing.assert_allclose(actual[1:, 0], theta_star)
 
 
 def test_appendix_e_ground_response_is_hourly():
