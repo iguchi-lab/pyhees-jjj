@@ -427,7 +427,48 @@ def calc_Q_UT_A(
         # 元の熱源機出力から除く床損失も、空調対象室（ゾーン1・2）のみ。
         Q_hat_hs_d_t -= np.sum(delta_L_room2uf_d_t_i[:5, :], axis=0)
         #260112 IGUCHI デバッグ用
-        #print("Q_hat_hs_d_t[0] 床下分…10276 tokens truncated…                  L_dash_CS_R_d_t_i = load.L_dash_CS_R_d_t_i,
+        #print("Q_hat_hs_d_t[0] 床下分を引く: ", Q_hat_hs_d_t[0])
+
+        # 2. 床下 -> 外気 (逃げ方向)
+        # 式(40)の補正前出力を1階空調対象室 / 全空調対象室で按分する。
+        A_s_ufac_A = float(np.sum(A_s_ufac_i))
+        A_s_ufac_HCZ_1F = float(np.sum(A_s_ufac_i[:5, 0][mask_uf_HCZ_i]))
+        A_HCZ_A = float(np.sum(A_HCZ_i))
+        match ac_setting:
+            case HeatingAcSetting():
+                L_d_t_flr1st = jjj_ufac_dc.calc_L_flr1st_area_apportioned_d_t(
+                    Q_hat_hs_base_d_t, A_s_ufac_HCZ_1F, A_HCZ_A, cooling=False
+                )
+            case CoolingAcSetting():
+                L_d_t_flr1st = jjj_ufac_dc.calc_L_flr1st_area_apportioned_d_t(
+                    Q_hat_hs_CS_base_d_t, A_s_ufac_HCZ_1F, A_HCZ_A, cooling=True
+                )
+                # 床下温度の熱収支には冷房顕熱出力のみを用いる。
+            case _:
+                raise ValueError
+
+        V_dash_supply_flr1st_d_t  \
+            = np.sum(V_dash_supply_d_t_i[mask_uf_HCZ_i, :], axis=0)
+
+   …9496 tokens truncated…ックのみ
+        if new_ufac.new_ufac_flg == 床下空調ロジック.変更する:
+            # θuf の本計算
+            Theta_uf_d_t, Theta_g_surf_d_t, *others  \
+                = algo.calc_Theta(  # 新床下空調-2nd
+                    region = house.region,
+                    A_A = house.A_A,
+                    A_MR = house.A_MR,
+                    A_OR = house.A_OR,
+                    Q = skin.Q,
+                    r_A_ufvnt = skin.r_A_ufac,  # 床下換気ではなく床下空調のため
+                    underfloor_insulation = skin.underfloor_insulation,
+                    Theta_sa_d_t = Theta_hs_out_d_t,  # ★
+                    Theta_ex_d_t = Theta_ex_d_t,
+                    # 熱源機出口温度から吹き出し温度を計算する
+                    V_sa_d_t_A = np.sum(V_dash_supply_d_t_i[:2, :], axis=0),  # i=1,2
+                    H_OR_C = "",
+                    L_dash_H_R_d_t_i = load.L_dash_H_R_d_t_i,
+                    L_dash_CS_R_d_t_i = load.L_dash_CS_R_d_t_i,
                     calc_backwards = False,  # ここでは θuf の従来計算のみ
                     new_ufac = new_ufac,
                     new_ufac_df = new_ufac_df
@@ -490,7 +531,6 @@ def calc_Q_UT_A(
                     HCM = HCM[t],
                     A_s_ufac_i = A_s_ufac_i[:5, :],
                     Theta_uf = Theta_uf_d_t[t],
-                    U_s_override = 0.0  # Excel benchmark omits the direct floor term here.
                 ) for t in range(24*365)
             ])
         else:
