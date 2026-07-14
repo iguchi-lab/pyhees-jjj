@@ -91,6 +91,18 @@ def combine_corrected_cooling_output(
     return Q_hat_hs_CS_adjusted_d_t + Q_hat_hs_CL_base_d_t
 
 
+def get_appendix_e_ground_parameters(
+        region: int,
+        Q: float,
+        Theta_ex_d_t: np.ndarray) -> tuple[float, float, float]:
+    """3章付録E(4)(5)(10)から床・基礎・地盤の値を算定する。"""
+    return (
+        algo.get_U_s_vert(region, Q),
+        algo.get_phi(region, Q),
+        algo.get_Theta_g_avg(Theta_ex_d_t),
+    )
+
+
 # NOTE: section4_2 の同名の関数の改変版
 @jjj_cloning
 @inject
@@ -334,9 +346,10 @@ def calc_Q_UT_A(
 
     # 吸熱応答係数の初項
     Phi_A_0 = 0.025504994
-    # 地盤の不易層温度と助走計算による吸熱応答成分の合計 (床下→地盤 熱損失計算用)
-    # Theta_ex_d_t に依存するが ループ内では変わらないため事前に計算する
-    Theta_g_avg = climate.get_Theta_g_avg()
+    # 3章付録E(4)(5)(10)から算定し、入力された丸め値は使用しない。
+    U_s_load, phi, Theta_g_avg = get_appendix_e_ground_parameters(
+        house.region, skin.Q, Theta_ex_d_t
+    )
     # The underfloor correction below needs the season masks even when CAV is off.
     H, C, M = dc.get_season_array_d_t(house.region)
     # 脱出条件:
@@ -398,7 +411,6 @@ def calc_Q_UT_A(
         # 床下から室への供給は無断熱床、元の負荷に含まれる損失は一般床断熱を使う。
         U_s_supply = new_ufac.U_s_vert  # 無断熱床: 2.223 W/(m2・K)
         A_s_ufac_i, _ = jjj_ufac_dc.get_A_s_ufac_i(house.A_A, house.A_MR, house.A_OR)
-        U_s_load = algo.get_U_s_vert(house.region, skin.Q)  # 標準住戸: 約0.542 W/(m2・K)
         mask_uf_HCZ_i = jjj_ufac_dc.get_r_A_uf_i().flatten()[:5] > 0
         #260112 IGUCHI デバッグ用
         #print("Q_hat_hs_d_t[0]: ", Q_hat_hs_d_t[0])
@@ -415,51 +427,7 @@ def calc_Q_UT_A(
         # 元の熱源機出力から除く床損失も、空調対象室（ゾーン1・2）のみ。
         Q_hat_hs_d_t -= np.sum(delta_L_room2uf_d_t_i[:5, :], axis=0)
         #260112 IGUCHI デバッグ用
-        #print("Q_hat_hs_d_t[0] 床下分を引く: ", Q_hat_hs_d_t[0])
-
-        # 2. 床下 -> 外気 (逃げ方向)
-        # 式(40)の補正前出力を1階空調対象室 / 全空調対象室で按分する。
-        A_s_ufac_A = float(np.sum(A_s_ufac_i))
-        A_s_ufac_HCZ_1F = float(np.sum(A_s_ufac_i[:5, 0][mask_uf_HCZ_i]))
-        A_HCZ_A = float(np.sum(A_HCZ_i))
-        match ac_setting:
-            case HeatingAcSetting():
-                L_d_t_flr1st = jjj_ufac_dc.calc_L_flr1st_area_apportioned_d_t(
-                    Q_hat_hs_base_d_t, A_s_ufac_HCZ_1F, A_HCZ_A, cooling=False
-                )
-            case CoolingAcSetting():
-                L_d_t_flr1st = jjj_ufac_dc.calc_L_flr1st_area_apportioned_d_t(
-                    Q_hat_hs_CS_base_d_t, A_s_ufac_HCZ_1F, A_HCZ_A, cooling=True
-                )
-                # 床下温度の熱収支には冷房顕熱出力のみを用いる。
-            case _:
-                raise ValueError
-
-        V_dash_supply_flr1st_d_t  \
-            = np.sum(V_dash_supply_d_t_i[mask_uf_HCZ_i, :], axis=0)
-
-        Theta_uf_d_t  \
-            = np.array([
-                jjj_ufac_dc.calc_Theta_uf(q_hs_rtd_H(), q_hs_rtd_C(),
-                    L_d_t_flr1st[t],
-                    A_s_ufac_HCZ_1F,
-                    …9476 tokens truncated…         # θuf の本計算
-            Theta_uf_d_t, Theta_g_surf_d_t, *others  \
-                = algo.calc_Theta(  # 新床下空調-2nd
-                    region = house.region,
-                    A_A = house.A_A,
-                    A_MR = house.A_MR,
-                    A_OR = house.A_OR,
-                    Q = skin.Q,
-                    r_A_ufvnt = skin.r_A_ufac,  # 床下換気ではなく床下空調のため
-                    underfloor_insulation = skin.underfloor_insulation,
-                    Theta_sa_d_t = Theta_hs_out_d_t,  # ★
-                    Theta_ex_d_t = Theta_ex_d_t,
-                    # 熱源機出口温度から吹き出し温度を計算する
-                    V_sa_d_t_A = np.sum(V_dash_supply_d_t_i[:2, :], axis=0),  # i=1,2
-                    H_OR_C = "",
-                    L_dash_H_R_d_t_i = load.L_dash_H_R_d_t_i,
-                    L_dash_CS_R_d_t_i = load.L_dash_CS_R_d_t_i,
+        #print("Q_hat_hs_d_t[0] 床下分…10276 tokens truncated…                  L_dash_CS_R_d_t_i = load.L_dash_CS_R_d_t_i,
                     calc_backwards = False,  # ここでは θuf の従来計算のみ
                     new_ufac = new_ufac,
                     new_ufac_df = new_ufac_df
@@ -848,4 +816,3 @@ def calc_Q_UT_A(
     return E_UT_d_t, \
             Theta_hs_out_d_t, Theta_hs_in_d_t, \
             X_hs_out_d_t, X_hs_in_d_t, V_hs_supply_d_t, V_hs_vent_d_t
-
