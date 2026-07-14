@@ -3,7 +3,10 @@ import pytest
 
 import pyhees.section4_2 as dc
 from jjjexperiment.common import JJJ_HCM
-from jjjexperiment.section4_2 import combine_corrected_cooling_output
+from jjjexperiment.section4_2 import (
+    combine_corrected_cooling_output,
+    get_appendix_e_ground_parameters,
+)
 from jjjexperiment.underfloor_ac.section3_1_e import (
     calc_sum_Theta_dash_g_surf_A_m_d_t,
 )
@@ -77,6 +80,21 @@ def test_underfloor_temperature_uses_distinct_load_and_supply_u_values():
     )
     expected = (load * 1e3 - original_floor_loss + theta_in * b) / b
     assert actual == pytest.approx(expected)
+
+
+def test_floor_foundation_and_ground_values_follow_appendix_e():
+    theta_ex = np.array([10.0, 12.0, 14.0])
+    q_value = 2.6479621918720855
+
+    u_floor, psi_foundation, theta_ground = get_appendix_e_ground_parameters(
+        region=6,
+        Q=q_value,
+        Theta_ex_d_t=theta_ex,
+    )
+
+    assert u_floor == pytest.approx(0.5422264459)
+    assert psi_foundation == pytest.approx(0.8459576178)
+    assert theta_ground == pytest.approx(np.average(theta_ex))
 
 
 def test_outdoor_heat_transfer_preserves_direction():
@@ -188,3 +206,22 @@ def test_appendix_e_ground_response_uses_configured_ground_temperature():
     )
     assert not np.allclose(low, high)
 
+
+def test_appendix_e_response_at_t_uses_heat_flux_at_t_minus_1():
+    hours = 24 * 365
+    theta_ex = np.full(hours, 10.0)
+    theta_uf_base = np.full(hours, 20.0)
+    theta_uf_changed = theta_uf_base.copy()
+    theta_uf_changed[0] = 25.0
+
+    base = calc_sum_Theta_dash_g_surf_A_m_d_t(
+        theta_uf_base, theta_ex, True, Theta_g_avg=10.0
+    )
+    changed = calc_sum_Theta_dash_g_surf_A_m_d_t(
+        theta_uf_changed, theta_ex, True, Theta_g_avg=10.0
+    )
+
+    # 当時刻の応答成分は前時刻の熱流から決まり、当時刻の床下温度には依存しない。
+    assert changed[0] == pytest.approx(base[0])
+    # 当時刻の床下温度は、次時刻の熱流・応答成分には反映される。
+    assert changed[1] != pytest.approx(base[1])
