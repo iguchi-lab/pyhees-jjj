@@ -1,11 +1,16 @@
 import numpy as np
 import pytest
 
+import pyhees.section3_1_e as appendix_e
 import pyhees.section4_2 as dc
+import jjjexperiment.section4_2 as experiment_section4_2
 from jjjexperiment.common import JJJ_HCM
+from jjjexperiment.inputs.options import 床下空調ロジック
 from jjjexperiment.section4_2 import (
+    _solve_shared_ground_feedback,
     combine_corrected_cooling_output,
     get_appendix_e_ground_parameters,
+    merge_annual_floor_temperature,
 )
 from jjjexperiment.underfloor_ac.section3_1_e import (
     calc_sum_Theta_dash_g_surf_A_m_d_t,
@@ -21,6 +26,7 @@ from jjjexperiment.underfloor_ac.section4_2 import (
     calc_delta_L_uf2outdoor,
     get_r_A_NR_uf_1F,
 )
+from jjjexperiment.underfloor_ac.inputs.common import UnderfloorAc, UfVarsDataFrame
 
 
 def test_first_floor_non_room_area_includes_bathroom():
@@ -265,3 +271,163 @@ def test_appendix_e_response_at_t_uses_heat_flux_at_t_minus_1():
     assert changed[0] == pytest.approx(base[0])
     # 当時刻の床下温度は、次時刻の熱流・応答成分には反映される。
     assert changed[1] != pytest.approx(base[1])
+
+
+def test_required_supply_temperature_uses_actual_floor_temperature_for_ground_response():
+    hours = 24 * 365
+    target_floor_temperature = np.full(hours, 25.0)
+    outdoor_temperature = np.full(hours, 10.0)
+    airflow = np.full(hours, 200.0)
+    loads = np.zeros((12, hours))
+    new_ufac = UnderfloorAc(
+        new_ufac_flg=床下空調ロジック.変更する
+    )
+    args = dict(
+        region=6,
+        A_A=120.08,
+        A_MR=29.81,
+        A_OR=51.34,
+        Q=0.87,
+        r_A_ufvnt=65.41 / 120.08,
+        underfloor_insulation=True,
+        Theta_sa_d_t=target_floor_temperature,
+        Theta_ex_d_t=outdoor_temperature,
+        V_sa_d_t_A=airflow,
+        H_OR_C="",
+        L_dash_H_R_d_t_i=loads,
+        L_dash_CS_R_d_t_i=loads,
+        calc_backwards=True,
+        new_ufac=new_ufac,
+    )
+
+    _, _, target_based_supply = appendix_e.calc_Theta(
+        **args,
+        new_ufac_df=UfVarsDataFrame(),
+    )
+    actual_floor_temperature = target_floor_temperature.copy()
+    actual_floor_temperature[0] = 20.0
+    _, _, actual_based_supply = appendix_e.calc_Theta(
+        **args,
+        new_ufac_df=UfVarsDataFrame(),
+        Theta_uf_ground_feedback_d_t=actual_floor_temperature,
+    )
+
+    # 当時刻の応答は前時刻の熱流から決まるため、最初の時刻は同じ。
+    assert actual_based_supply[0] == pytest.approx(target_based_supply[0])
+    # 1時間目の実床下温度の変更は、2時間目の要求温度へ反映される。
+    assert actual_based_supply[1] != pytest.approx(target_based_supply[1])
+
+
+def test_ground_response_feedback_uses_actual_floor_temperature_and_exports_once(
+        monkeypatch):
+    calls = []
+    output_holder = UfVarsDataFrame()
+
+    def fake_calc_once(**kwargs):
+        feedback = kwargs.get("Theta_uf_ground_feedback_d_t")
+        export_outputs = kwargs.get("export_outputs", True)
+        calls.append((
+            None if feedback is None else feedback.copy(),
+            export_outputs,
+            kwargs["new_ufac_df"],
+        ))
+        actual = (
+            np.zeros(1)
+            if feedback is None
+            else 0.25 * feedback + 1.5
+        )
+        marker = "final" if export_outputs else "iteration"
+        return marker, 1, 2, 3, 4, 5, 6, actual
+
+    monkeypatch.setattr(
+        experiment_section4_2, "_calc_Q_UT_A_once", fake_calc_once
+    )
+
+    result = experiment_section4_2.calc_Q_UT_A(
+        case_name="case",
+        climateFile=None,
+        house=None,
+        ac_setting=None,
+        skin=None,
+        heat_CRAC=None,
+        cool_CRAC=None,
+        new_ufac=UnderfloorAc(
+            new_ufac_flg=床下空調ロジック.変更する
+        ),
+        new_ufac_df=output_holder,
+        v_min_heat_input=None,
+        v_min_cool_input=None,
+        V_hs_dsgn_H=0.0,
+        V_hs_dsgn_C=0.0,
+        v_supply_cap_dto=None,
+        carryover_heat_dto=None,
+        load=None,
+    )
+
+    assert result[0] == "final"
+    assert calls[0][0] is None
+    assert calls[1][0] == pytest.approx(np.zeros(1))
+    assert all(not export for _, export, _ in calls[:-1])
+    assert all(holder is not output_holder for _, _, holder in calls[:-1])
+    assert calls[-1][1] is True
+    assert calls[-1][2] is output_holder
+
+
+def test_merge_annual_floor_temperature_uses_each_season_series():
+    H = np.zeros(24 * 365, dtype=bool)
+    C = np.zeros(24 * 365, dtype=bool)
+    H[:2664] = True
+    C[2664:6385] = True
+
+    merged = merge_annual_floor_temperature(
+        np.full(24 * 365, 21.0),
+        np.full(24 * 365, 26.0),
+        np.full(24 * 365, 23.0),
+        H,
+        C,
+    )
+
+    assert np.all(merged[:2664] == 21.0)
+    assert np.all(merged[2664:6385] == 26.0)
+    assert np.all(merged[6385:] == 23.0)
+
+
+def test_shared_ground_feedback_passes_same_annual_history_to_both_modes(
+        monkeypatch):
+    H = np.zeros(24 * 365, dtype=bool)
+    C = np.zeros(24 * 365, dtype=bool)
+    H[:3000] = True
+    C[3000:7000] = True
+    middle = np.full(24 * 365, 15.0)
+    received = {"H": [], "C": []}
+
+    def fake_calc_once(**kwargs):
+        mode = kwargs["ac_setting"]
+        feedback = kwargs.get("Theta_uf_ground_feedback_d_t")
+        received[mode].append(None if feedback is None else feedback.copy())
+        if feedback is None:
+            actual = np.zeros(24 * 365)
+        elif mode == "H":
+            actual = 0.25 * feedback + 10.0
+        else:
+            actual = 0.25 * feedback + 20.0
+        return 0, 1, 2, 3, 4, 5, 6, actual, middle
+
+    monkeypatch.setattr(
+        experiment_section4_2, "_calc_Q_UT_A_once", fake_calc_once
+    )
+    feedback, iteration_count, max_delta = _solve_shared_ground_feedback(
+        {"ac_setting": "H", "new_ufac_df": UfVarsDataFrame()},
+        {"ac_setting": "C", "new_ufac_df": UfVarsDataFrame()},
+        H,
+        C,
+    )
+
+    assert iteration_count <= experiment_section4_2.GROUND_FEEDBACK_MAX_ITERATIONS
+    assert max_delta <= experiment_section4_2.GROUND_FEEDBACK_TOLERANCE
+    np.testing.assert_allclose(feedback[:3000], 10.0 / 0.75, atol=1.0e-4)
+    np.testing.assert_allclose(feedback[3000:7000], 20.0 / 0.75, atol=1.0e-4)
+    assert np.all(feedback[7000:] == 15.0)
+    for heating_feedback, cooling_feedback in zip(
+            received["H"][1:], received["C"][1:]):
+        np.testing.assert_allclose(heating_feedback, cooling_feedback)
