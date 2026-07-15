@@ -374,7 +374,8 @@ def calc_Theta(region, A_A, A_MR, A_OR, Q, r_A_ufvnt, underfloor_insulation, The
                L_dash_CS_R_d_t_i,
                calc_backwards: bool = False,
                new_ufac: UnderfloorAc = None,
-               new_ufac_df: UfVarsDataFrame = None
+               new_ufac_df: UfVarsDataFrame = None,
+               Theta_uf_ground_feedback_d_t = None,
                ):
     """床下温度及び地盤またはそれを覆う基礎の表面温度 (℃) (1)(9)
 
@@ -393,6 +394,8 @@ def calc_Theta(region, A_A, A_MR, A_OR, Q, r_A_ufvnt, underfloor_insulation, The
       L_dash_H_R_d_t_i(ndarray): 標準住戸の負荷補正前の暖房負荷 (MJ/h)
       L_dash_CS_R_d_t_i(ndarray): 標準住戸の負荷補正前の冷房顕熱負荷 （MJ/h）
       calc_backwards(bool): θuf_supply_d_t の逆算が必要か(その分時間かかる)
+      Theta_uf_ground_feedback_d_t(ndarray): 地盤応答の更新に使用する実床下温度 (℃)。
+        None の場合は従来どおり、当該呼出しで計算した床下温度を使用する。
 
     Returns:
       Theta_uf_d_t: 日付dの時刻tにおける 床下温度 (℃)
@@ -432,6 +435,15 @@ def calc_Theta(region, A_A, A_MR, A_OR, Q, r_A_ufvnt, underfloor_insulation, The
 
     Theta_supply_d_t = np.zeros(24 * 365)
 
+    if Theta_uf_ground_feedback_d_t is not None:
+      Theta_uf_ground_feedback_d_t = np.asarray(
+          Theta_uf_ground_feedback_d_t, dtype=float
+      )
+      if Theta_uf_ground_feedback_d_t.shape != (24 * 365,):
+        raise ValueError(
+            "Theta_uf_ground_feedback_d_t must have shape (8760,)"
+        )
+
     # 初期値の設定
     Theta_uf_prev = 0.0
     Theta_g_surf_prev = 0.0
@@ -450,12 +462,8 @@ def calc_Theta(region, A_A, A_MR, A_OR, Q, r_A_ufvnt, underfloor_insulation, The
           new_ufac_df = thread_injector.get(UfVarsDataFrame)
 
     # 助走計算用床下温度
-    if new_ufac is not None and new_ufac.new_ufac_flg == 床下空調ロジック.変更する:
-        from jjjexperiment.underfloor_ac.section3_1_e import get_Theta_uf_d_t_runup as jjj_ufac_get_Theta_uf_d_t_runup
-        #260112 IGUCHI 新床下空調用固定値
-        Theta_uf_runup = jjj_ufac_get_Theta_uf_d_t_runup()
-    else:
-        Theta_uf_runup = get_Theta_uf_d_t_runup(underfloor_insulation, Theta_ex_d_t)
+    # Appendix E run-up uses the insulation setting and outdoor temperature.
+    Theta_uf_runup = get_Theta_uf_d_t_runup(underfloor_insulation, Theta_ex_d_t)
 
     Theta_in_H = 20
     Theta_in_C = 27
@@ -612,12 +620,20 @@ def calc_Theta(region, A_A, A_MR, A_OR, Q, r_A_ufvnt, underfloor_insulation, The
           Theta_supply_d_t[dt] = Theta_sa_d_t[dt]
           Theta_uf = calc_Theta_uf(Theta_sa_d_t[dt])
 
+        # 地盤応答は1時間前の実床下温度から更新する。要求温度の逆算時は
+        # Theta_uf が目標温度になるため、反復計算から渡された実温度を用いる。
+        Theta_uf_for_ground = (
+            Theta_uf
+            if Theta_uf_ground_feedback_d_t is None
+            else Theta_uf_ground_feedback_d_t[dt]
+        )
+
         # 地盤またはそれを覆う基礎の表面温度 (℃) (9)
-        Theta_g_surf = (((Phi_A_0 / R_g) * Theta_uf + np.sum(Theta_dash_g_surf_A_m) + Theta_g_avg)
+        Theta_g_surf = (((Phi_A_0 / R_g) * Theta_uf_for_ground + np.sum(Theta_dash_g_surf_A_m) + Theta_g_avg)
                         / (1.0 + (Phi_A_0 / R_g)))
 
         # 次時刻へ値を保存
-        Theta_uf_prev = Theta_uf
+        Theta_uf_prev = Theta_uf_for_ground
         Theta_g_surf_prev = Theta_g_surf
         Theta_dash_g_surf_A_m_prev = Theta_dash_g_surf_A_m
 

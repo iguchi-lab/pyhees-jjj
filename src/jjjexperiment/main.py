@@ -178,6 +178,22 @@ def calc_main(
 
         return dc_spec.get_V_fan_dsgn_H(V_fan_rtd_H)
 
+    def get_V_hs_dsgn_C(type: 計算モデル, v_fan_rtd: float, q_rtd_C: float):
+        if type in [
+                計算モデル.ダクト式セントラル空調機,
+                計算モデル.RAC活用型全館空調_潜熱評価モデル
+            ]:
+            pass
+        elif type in [
+                計算モデル.RAC活用型全館空調_現行省エネ法RACモデル,
+                計算モデル.電中研モデル
+            ]:
+            v_fan_rtd = dc_spec.get_V_fan_rtd_C(q_rtd_C)
+        else:
+            raise Exception("冷房方式が不正です。")
+
+        return dc_spec.get_V_fan_dsgn_C(v_fan_rtd)
+
     def arr_summary(arr: np.ndarray):
         return {
             "MAX  ": max(arr),
@@ -189,6 +205,23 @@ def calc_main(
         heat_ac_setting.V_hs_dsgn if heat_ac_setting.V_hs_dsgn > 0  \
         else get_V_hs_dsgn_H(heat_ac_setting.type, heat_quantity.V_fan_rtd, heat_CRAC.q_rtd)
     """ 暖房時の送風機の設計風量 [m3/h] """
+
+    V_hs_dsgn_C_for_ground: float =  \
+        cool_ac_setting.V_hs_dsgn if cool_ac_setting.V_hs_dsgn > 0  \
+        else get_V_hs_dsgn_C(
+            cool_ac_setting.type, cool_quantity.V_fan_rtd, cool_CRAC.q_rtd
+        )
+
+    annual_ground_feedback_context = jjj_dc.AnnualGroundFeedbackContext(
+        heat_ac_setting=heat_ac_setting,
+        cool_ac_setting=cool_ac_setting,
+        V_hs_dsgn_H=V_hs_dsgn_H,
+        V_hs_dsgn_C=V_hs_dsgn_C_for_ground,
+    )
+    injector.binder.bind(
+        jjj_dc.AnnualGroundFeedbackContext,
+        to=annual_ground_feedback_context,
+    )
 
     V_hs_dsgn_C: float = 0.0  # NOTE: 暖房負荷計算時は空
     """ 冷房時の送風機の設計風量 [m3/h] """
@@ -384,25 +417,7 @@ def calc_main(
     ##### 冷房消費電力の計算（kWh/h）
     print("冷房消費電力の計算")
 
-    def get_V_hs_dsgn_C(type: 計算モデル, v_fan_rtd: float, q_rtd_C: float):
-        if type in [
-                計算モデル.ダクト式セントラル空調機,
-                計算モデル.RAC活用型全館空調_潜熱評価モデル
-            ]:
-            pass
-        elif type in [
-                計算モデル.RAC活用型全館空調_現行省エネ法RACモデル,
-                計算モデル.電中研モデル
-            ]:
-            v_fan_rtd = dc_spec.get_V_fan_rtd_C(q_rtd_C)
-        else:
-            raise Exception("冷房方式が不正です。")
-
-        return dc_spec.get_V_fan_dsgn_C(v_fan_rtd)
-
-    V_hs_dsgn_C: float =  \
-        cool_ac_setting.V_hs_dsgn if cool_ac_setting.V_hs_dsgn > 0  \
-        else get_V_hs_dsgn_C(cool_ac_setting.type, cool_quantity.V_fan_rtd, cool_CRAC.q_rtd)
+    V_hs_dsgn_C: float = annual_ground_feedback_context.V_hs_dsgn_C
     """ 冷房時の送風機の設計風量 [m3/h] """
 
     V_hs_dsgn_H: float = 0.0  # NOTE: 冷房負荷計算時は空

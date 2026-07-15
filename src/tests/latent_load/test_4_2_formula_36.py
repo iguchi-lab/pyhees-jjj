@@ -70,6 +70,25 @@ class Test風量特性_熱源機:
         indices_C = np.where(self._C == True)[0]
         np.testing.assert_allclose(sut[indices_C], y(x_mid) * 60)  # m3/h
 
+    def test_夏季の風量入力は冷房顕熱と潜熱の合計(self):
+        q_hat_cs_kw = 1.0
+        q_hat_cl_kw = 2.0
+        q_hat_total_kw = q_hat_cs_kw + q_hat_cl_kw
+        Q_hat_hs_d_t = np.ones(24 * 365) * kw2mjph(q_hat_total_kw)
+
+        sut = dc.get_V_dash_hs_supply_d_t_2023(
+            Q_hat_hs_d_t, self._region, for_cooling=True
+        )
+
+        expected_m3_per_min = np.clip(
+            jjj_consts.airvolume_coeff_a1_C * q_hat_total_kw
+            + jjj_consts.airvolume_coeff_a0_C,
+            jjj_consts.airvolume_minimum_C,
+            jjj_consts.airvolume_maximum_C,
+        )
+        indices_C = np.where(self._C == True)[0]
+        np.testing.assert_allclose(sut[indices_C], expected_m3_per_min * 60)
+
     def test_夏季の暖房出力_下限キャップ(self):
         # テキトーな高めの値 10.0 kw
         Q_hat_hs_d_t = np.ones(24 * 365) * kw2mjph(10)
@@ -128,3 +147,4 @@ class Test風量特性_熱源機:
 def kw2mjph(x: float) -> float:
     """ kW -> MJ/h へ単位変換する """
     return x * 3600 / 1000
+

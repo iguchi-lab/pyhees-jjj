@@ -5,7 +5,7 @@ def version_info() -> str:
   """
   # NOTE: GitHub Actions 経由でプッシュされた日で上書きしています
   # 本ファイル名に変更があれば 設定更新すること
-  return '_20260323'
+  return '_20260715'
 
 Theta_hs_out_max_H_d_t_limit: float = 45
 """最大暖房出力時の熱源機の出口における空気温度の最大値の上限値"""

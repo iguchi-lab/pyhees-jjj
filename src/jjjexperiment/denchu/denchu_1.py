@@ -111,9 +111,14 @@ def get_DataFrame_denchu_modeling_consts(
         """
         df = pd.DataFrame(index=['電中研モデリング定数'], columns=['値'])
         df = spec.outputDataFrame(df)
-        df = df._append(
-            pd.DataFrame([[R2], [R1], [R0]], columns=df.columns, index=['R2', 'R1', 'R0'])
-        )
+        df = pd.concat([
+            df,
+            pd.DataFrame(
+                [[R2], [R1], [R0]],
+                columns=df.columns,
+                index=['R2', 'R1', 'R0'],
+            ),
+        ])
         df.loc['ファン等消費電力Pc [W]'] = [Pc]
         df.loc['実際の使用状況におけるエアコン吸込み空気の 温度 [℃]'] = [real_inner.Theta_rac_real_inner]
         df.loc['実際の使用状況におけるエアコン吸込み空気の 相対温度 [%]'] = [real_inner.RH_rac_real_inner]

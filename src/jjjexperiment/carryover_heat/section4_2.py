@@ -110,8 +110,10 @@ def get_L_star_CS_i_2024(
     if not C or np.all(L_CS_i <= 0):
         return np.zeros((5, 1))
 
-    # 繰越熱量は負荷低減に働く
-    L_star_CS_i = L_CS_i + Q_star_trs_prt_i - carryover
+    # Q_star_trs_prt_i は居室から非居室への熱移動を正とする。
+    # 冷房時は負値（非居室から居室への熱取得）となるため、冷房負荷から差し引く。
+    # 繰越熱量は負荷低減に働く。
+    L_star_CS_i = L_CS_i - Q_star_trs_prt_i - carryover
     L_star_CS_i = np.clip(L_star_CS_i, 0, None)
 
     # 事後条件:
@@ -299,3 +301,4 @@ def get_Theta_NR_2023(
     # 事後条件: 次数チェック
     assert isinstance(Theta_NR, float), "Theta_NRの次数が想定外"
     return Theta_NR
+

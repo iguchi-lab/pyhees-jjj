@@ -18,21 +18,126 @@ def get_r_A_uf_i() -> Array12x1:
     return r_A_uf_i
 
 
-def get_r_A_NR_uf_1F_excl_bath() -> float:
-    """非居室の床下から貫流する部分の面積の割合 (1F・浴室除く) [-]
+def get_r_A_NR_uf_1F() -> float:
+    '''Return the ratio of first-floor non-room area contacting underfloor air.
 
-    非居室ゾーン(i=6~12)のうち床下空間に接するゾーン(i=6,7,9)の有効面積合計と
-    標準住戸の非居室合計面積の比率。ゾーン8(浴室)は除外する。
-    この値は住戸面積(A_A, A_MR, A_OR)には依存しない構造定数。
-
-    Returns:
-        float: 非居室の1F(浴室除く)面積比 (≈ 0.404)
-    """
-    # 1F NR有効面積 (浴室=ゾーン8 を除く)
-    A_NR_1F_excl_bath = sum(algo.get_r_A_uf_i(i) * get_A_HCZ_R_i(i) for i in [6, 7, 9])
+    Zones 6, 7, 8, and 9 contact the underfloor space. Zone 9 uses its
+    partial contact ratio. The standard-area ratio is invariant when all
+    non-room zones are scaled to the dwelling non-room area.
+    '''
+    A_NR_1F = sum(algo.get_r_A_uf_i(i) * get_A_HCZ_R_i(i) for i in [6, 7, 8, 9])
     # 標準住戸の非居室合計面積
     A_NR_R = sum(get_A_HCZ_R_i(i) for i in range(6, 13))
-    return A_NR_1F_excl_bath / A_NR_R
+    return A_NR_1F / A_NR_R
+
+
+def calc_L_flr1st_area_apportioned_d_t(
+        Q_hat_hs_d_t: np.ndarray,
+        A_s_ufvnt_HCZ_1F: float,
+        A_HCZ_A: float,
+        cooling: bool,
+    ) -> np.ndarray:
+    """式(40)用の1階負荷を空調対象室の床面積比で按分する。
+
+    暖房時は ``L_H,1F = Q_hat_hs,H * A_s,uf,HCZ,1F / A_HCZ,A``、
+    冷房時は顕熱出力を用い、床下温度の熱収支に合わせて負値で返す。
+
+    Args:
+        Q_hat_hs_d_t: 式(40)の補正前の熱源機出力 [MJ/h]
+        A_s_ufvnt_HCZ_1F: 1階空調対象室の床下接触面積 [m2]
+        A_HCZ_A: 空調対象室（主たる居室・その他居室）の床面積合計 [m2]
+        cooling: 冷房時はTrue
+
+    Returns:
+        面積按分した1階の暖房負荷、または冷房顕熱負荷 [MJ/h]
+    """
+    assert Q_hat_hs_d_t.shape == (24 * 365,)
+    assert A_HCZ_A > 0, "空調対象室の床面積合計は正の値"
+    assert 0 <= A_s_ufvnt_HCZ_1F <= A_HCZ_A, \
+        "1階空調対象室面積は空調対象室の床面積合計以下"
+
+    L_flr1st_d_t = Q_hat_hs_d_t * A_s_ufvnt_HCZ_1F / A_HCZ_A
+    return -L_flr1st_d_t if cooling else L_flr1st_d_t
+
+
+def calc_Q_hat_hs_H_raw_d_t(
+        Q: float,
+        A_A: float,
+        V_vent_l_d_t: np.ndarray,
+        V_vent_g_i: np.ndarray,
+        mu_H: float | None,
+        J_d_t: np.ndarray,
+        q_gen_d_t: np.ndarray,
+        n_p_d_t: np.ndarray,
+        q_p_H: float,
+        Theta_ex_d_t: np.ndarray,
+        region: int,
+    ) -> np.ndarray:
+    """Return the unclipped heating part of equation (40).
+
+    The ordinary equation (40) output is clipped to zero before it is used as
+    heat-source output.  The underfloor preliminary balance calculation in the
+    reference workbook instead apportions the value *before* that clipping
+    (``負荷計算!CB``).  Keeping this value separate avoids allowing a negative
+    heat-source output while still reproducing the workbook's balance
+    temperature.
+    """
+    H, _, _ = dc.get_season_array_d_t(region)
+    result = np.zeros(24 * 365)
+    if mu_H is None:
+        return result
+
+    c_p_air = dc.get_c_p_air()
+    rho_air = dc.get_rho_air()
+    Theta_set_H = dc.get_Theta_set_H()
+    result[H] = (
+        (
+            (Q - 0.35 * 0.5 * 2.4) * A_A
+            + c_p_air * rho_air
+            * (V_vent_l_d_t[H] + np.sum(V_vent_g_i[:5])) / 3600
+        )
+        * (Theta_set_H - Theta_ex_d_t[H])
+        - mu_H * A_A * J_d_t[H]
+        - q_gen_d_t[H]
+        - n_p_d_t[H] * q_p_H
+    ) * 3600 * 1e-6
+    return result
+
+
+def calc_Q_hat_hs_CS_raw_d_t(
+        Q: float,
+        A_A: float,
+        V_vent_l_d_t: np.ndarray,
+        V_vent_g_i: np.ndarray,
+        mu_C: float | None,
+        J_d_t: np.ndarray,
+        q_gen_d_t: np.ndarray,
+        n_p_d_t: np.ndarray,
+        q_p_CS: float,
+        Theta_ex_d_t: np.ndarray,
+        region: int,
+    ) -> np.ndarray:
+    """Return the unclipped, signed sensible-cooling part of equation (40)."""
+    _, C, _ = dc.get_season_array_d_t(region)
+    result = np.zeros(24 * 365)
+    if mu_C is None:
+        return result
+
+    c_p_air = dc.get_c_p_air()
+    rho_air = dc.get_rho_air()
+    Theta_set_C = dc.get_Theta_set_C()
+    result[C] = (
+        (
+            (Q - 0.35 * 0.5 * 2.4) * A_A
+            + c_p_air * rho_air
+            * (V_vent_l_d_t[C] + np.sum(V_vent_g_i[:5])) / 3600
+        )
+        * (Theta_ex_d_t[C] - Theta_set_C)
+        + mu_C * A_A * J_d_t[C]
+        + q_gen_d_t[C]
+        + n_p_d_t[C] * q_p_CS
+    ) * 3600 * 1e-6
+    return result
 
 
 def get_A_s_ufac_i(
@@ -69,9 +174,9 @@ def calc_Theta_uf(
         q_hs_rtd_H: float,
         q_hs_rtd_C: float,
         L_flr1st: float,
-        A_s_ufvnt: float,
-        U_s_vert: float,
-        U_s_floor_ins: float,
+        A_s_ufvnt_HCZ_1F: float,
+        U_s_supply: float,
+        U_s_load: float,
         Theta_in: float,
         Theta_ex: float,
         V_flr1st: float,
@@ -79,12 +184,13 @@ def calc_Theta_uf(
     """床下空間の温度 (40-4) 単時点
 
     Args:
-        L_H_flr1st: 一階部分の1時間当たりの暖房負荷 [MJ/h]
-        A_s_ufvnt: 空気を供給する床下空間に接する床の面積 [m2]
-        U_s_vert: 床の熱貫流率 [W/m2K]
+        L_flr1st: 1階空調対象室の1時間当たりの暖房負荷（冷房は負値） [MJ/h]
+        A_s_ufvnt_HCZ_1F: 1階空調対象室の床下接触面積 [m2]
+        U_s_supply: 床下から室へ熱を供給する無断熱床の熱貫流率 [W/m2K]
+        U_s_load: 通常の負荷計算で見込んだ床の熱貫流率 [W/m2K]
         Theta_in: 室温 [℃]
         Theta_ex: 外気温度 [℃]
-        V_flr1st: 第1床面積 [m2]
+        V_flr1st: 1階空調対象室への吹出風量 [m3/h]
 
     Returns:
         床下空間の温度 [℃]
@@ -94,7 +200,8 @@ def calc_Theta_uf(
     H_floor = 0.7  # 床の温度差係数(-) 損失として
 
     # TODO: sympy の方程式で記述できればコードの意味が理解しやすくなる
-    b = ro_air * c_p_air * V_flr1st + U_s_vert * A_s_ufvnt * 3.6
+    b = ro_air * c_p_air * V_flr1st \
+        + U_s_supply * A_s_ufvnt_HCZ_1F * 3.6
 
     match (q_hs_rtd_H, q_hs_rtd_C):
         case (None, None):
@@ -102,19 +209,20 @@ def calc_Theta_uf(
 
         case (_, None):  # 暖房期
             delta_Theta = max(Theta_in - Theta_ex, 0)
-            #200112 IGUCHI 差し引く負荷は床断熱 (U=0.41)
-            #[OLD] a2 = U_s_vert * A_s_ufvnt * delta_Theta * H_floor * 3.6
-            a2 = U_s_floor_ins * A_s_ufvnt * delta_Theta * H_floor * 3.6
-            assert L_flr1st >= 0, "暖房期の負荷は正の値"
+            # 元の負荷計算に含まれる一般床断熱の損失を差し引く。
+            a2 = U_s_load * A_s_ufvnt_HCZ_1F * delta_Theta * H_floor * 3.6
+            # The workbook uses the unclipped equation (40) heating value for
+            # this preliminary balance, so L_flr1st may be negative even
+            # though the final heat-source output remains bounded at zero.
             Theta_uf = (L_flr1st * 1e+3 - a2 + Theta_in * b) / b
             return Theta_uf
 
         case (None, _):  # 冷房期
             delta_Theta = max(Theta_ex - Theta_in, 0)
-            #200112 IGUCHI 差し引く負荷は床断熱 (U=0.41)
-            #[OLD] a2 = U_s_vert * A_s_ufvnt * delta_Theta * H_floor * 3.6
-            a2 = U_s_floor_ins * A_s_ufvnt * delta_Theta * H_floor * 3.6
-            assert L_flr1st <= 0, "冷房期の負荷は負の値"
+            # 元の負荷計算に含まれる一般床断熱の損失を差し引く。
+            a2 = U_s_load * A_s_ufvnt_HCZ_1F * delta_Theta * H_floor * 3.6
+            # The unclipped sensible-cooling value can have either sign in
+            # the workbook's preliminary balance calculation.
             Theta_uf = (L_flr1st * 1e+3 + a2 + Theta_in * b) / b
             return Theta_uf
 
@@ -124,14 +232,14 @@ def calc_Theta_uf(
 
 # vectorizeできなのいのでhstack-broadcastで対応 (A_s_ufac_iが強制でfloatになるため)
 def calc_delta_L_room2uf_i(
-        U_s_floor_ins: float,
+        U_s_load: float,
         A_s_ufac_i: Array5x1,
         delta_Theta: float
     ) -> Array5x1:
     """床下空間から居室全体への熱損失 [MJ/h]
 
     Args:
-        U_s_floor_ins: 床断熱の熱貫流率 [W/m2・K]
+        U_s_load: 通常の負荷計算で見込んだ床の熱貫流率 [W/m2・K]
 
     """
     assert A_s_ufac_i.ndim == 2
@@ -139,9 +247,8 @@ def calc_delta_L_room2uf_i(
 
     H_floor = 0.7  # 床下空調でなく意図しない熱移動の分なので通常の遮蔽係数(0.7)となる
 
-    #200112 IGUCHI 床下空間へ逃げる熱は、床断熱（U=0.41）の床の損失であるため修正
-    #[OLD] delta_L_uf2room = U_s_vert * A_s_ufac_i * delta_Theta * H_floor * 3.6 / 1000  # [W] -> [MJ/h]
-    delta_L_uf2room = U_s_floor_ins * A_s_ufac_i * delta_Theta * H_floor * 3.6 / 1000  # [W] -> [MJ/h]
+    # 元の負荷計算に含まれる一般床断熱の損失を除く。
+    delta_L_uf2room = U_s_load * A_s_ufac_i * delta_Theta * H_floor * 3.6 / 1000  # [W] -> [MJ/h]
 
     # NOTE: L_H_d_t_i, L_CS_d_t_i に含まれている通常(非床下空調)の床下ロス部分(室内→床下→屋外)
     # 下記の補正を追加する前にコチラを引くことでイコールフッティングできます
@@ -160,7 +267,7 @@ def calc_delta_L_uf2outdoor(
         L_uf: 土間床等の外気に接する床の周辺部の長さ [m]
         delta_Theta: 床下空間と外気の温度差 [℃]
     """
-    return phi * L_uf * np.abs(delta_Theta) * 3.6 / 1000  # [W] -> [MJ/h]
+    return phi * L_uf * delta_Theta * 3.6 / 1000  # [W] -> [MJ/h]
 
 
 def calc_delta_L_uf2gnd(
@@ -198,3 +305,4 @@ def calc_delta_L_uf2gnd(
 
     return (A_s_ufvnt_A / R_g) / (1 + Phi_A_0 / R_g)  \
         * delta_Theta * 3.6 / 1000  # [W] -> [MJ/h]
+

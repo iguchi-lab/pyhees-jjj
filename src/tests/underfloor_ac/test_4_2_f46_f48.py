@@ -9,7 +9,7 @@ from jjjexperiment.inputs.options import *
 from jjjexperiment.inputs.di_container import create_injector_from_json
 from jjjexperiment.inputs.environment_service import EnvironmentService
 from jjjexperiment.inputs.common import HouseInfo, OuterSkin
-from jjjexperiment.underfloor_ac.section4_2 import get_A_s_ufac_i, get_r_A_NR_uf_1F_excl_bath
+from jjjexperiment.underfloor_ac.section4_2 import get_A_s_ufac_i, get_r_A_NR_uf_1F
 from jjjexperiment.underfloor_ac.section4_2_f46_f48 import get_Theta_HBR_i, get_Theta_NR
 
 from test_utils.utils import load_input_yaml
@@ -78,7 +78,7 @@ class Test_床下空調時_式46_式48:
             A_prt_i = np.array([32.92, 24.02, 19.22, 15.61, 15.61]).reshape(-1, 1),
             Q = 2.6472,
             Theta_uf = 24.89,
-            r_A_NR_1F_excl_bath = get_r_A_NR_uf_1F_excl_bath()
+            r_A_NR_1F = get_r_A_NR_uf_1F()
         )
         # Assert
         assert Theta_NR == pytest.approx(20.65, abs=1e-2)  # 20.64 -> 20.40

@@ -688,8 +688,9 @@ def get_L_star_CS_d_t_i(L_CS_d_t_i, Q_star_trs_prt_d_t_i, region):
     assert np.shape(Cf) == (5, 24 * 365)
 
     L_star_CS_d_t_i = np.zeros((5, 24 * 365))
-    # NOTE(25'04): 建研の式が誤っている?先生より指摘受け 和->差 へ変更したい
-    L_star_CS_d_t_i[Cf] = np.clip(L_CS_d_t_i[Cf] + Q_star_trs_prt_d_t_i[Cf], 0, None)
+    # Q_star_trs_prt_d_t_i は居室から非居室への熱移動を正とする。
+    # 冷房時は負値（非居室から居室への熱取得）となるため、冷房負荷から差し引く。
+    L_star_CS_d_t_i[Cf] = np.clip(L_CS_d_t_i[Cf] - Q_star_trs_prt_d_t_i[Cf], 0, None)
     return L_star_CS_d_t_i
 
 
@@ -3261,3 +3262,4 @@ if __name__ == '__main__':
         })
 
         df.to_csv('新法_Calc_condition_' + str(i + 1) +'.csv')
+

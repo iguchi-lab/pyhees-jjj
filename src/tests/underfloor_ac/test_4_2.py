@@ -5,7 +5,7 @@ import numpy as np
 from jjjexperiment.inputs.di_container import create_injector_from_json
 from jjjexperiment.inputs.common import HouseInfo
 from jjjexperiment.underfloor_ac.section3_1_e import get_Theta_uf_d_t_runup
-from jjjexperiment.underfloor_ac.section4_2 import get_A_s_ufac_i, get_r_A_NR_uf_1F_excl_bath
+from jjjexperiment.underfloor_ac.section4_2 import get_A_s_ufac_i, get_r_A_NR_uf_1F
 from test_utils.utils import load_input_yaml
 
 class Test_床下空調時_共通:
@@ -27,17 +27,17 @@ class Test_床下空調時_共通:
         assert np.shape(A_s_ufac_i) == (12, 1)
         assert r_A_s_ufac == pytest.approx(65.4/house.A_A, rel=1e-2)
 
-    def test_非居室1F浴室除く面積比(self):
+    def test_非居室1F床下接触面積比(self):
         """
-        get_r_A_NR_uf_1F_excl_bath が標準住戸における
-        1F非居室(浴室除く)面積 / 非居室合計面積 ≈ 0.404 を返すこと
+        get_r_A_NR_uf_1F が標準住戸における
+        1F床下接触非居室面積 / 非居室合計面積 ≈ 0.489 を返すこと
         """
         # Act
-        r = get_r_A_NR_uf_1F_excl_bath()
+        r = get_r_A_NR_uf_1F()
 
         # Assert
-        # ゾーン6,7,9の有効面積 (3.31+1.66+10.76) / 標準住戸非居室合計 (38.93)
-        expected = (3.31 + 1.66 + 10.76) / 38.93  # 0.404
+        # ゾーン6,7,8,9の有効面積 (3.31+1.66+3.31+10.76) / 非居室合計 (38.93)
+        expected = (3.31 + 1.66 + 3.31 + 10.76) / 38.93
         assert r == pytest.approx(expected, rel=1e-4)
 
     def test_新床下空調助走計算用床下温度(self):

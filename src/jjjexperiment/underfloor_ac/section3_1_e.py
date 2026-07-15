@@ -36,7 +36,11 @@ def get_Theta_uf_d_t_runup() -> np.ndarray:
 
 
 @log_res(['Theta_uf_d_t'])
-def calc_Theta_uf_d_t_2023(L_star_H_d_t_i, L_star_CS_d_t_i, A_A, A_MR, A_OR, r_A_ufvnt, V_dash_supply_d_t_i, Theta_ex_d_t):
+def calc_Theta_uf_d_t_2023(
+        L_star_H_d_t_i, L_star_CS_d_t_i,
+        A_A, A_MR, A_OR, r_A_ufvnt,
+        V_dash_supply_d_t_i, Theta_ex_d_t,
+        H, C, M):
     """定常状態での床下温度を求める
 
     Args:
@@ -48,6 +52,9 @@ def calc_Theta_uf_d_t_2023(L_star_H_d_t_i, L_star_CS_d_t_i, A_A, A_MR, A_OR, r_A
       r_A_ufvnt(list[float]): 当該住戸において、床下空間全体の面積に対する空気を供給する床下空間の面積の比 (-)
       V_dash_supply_d_t_i(ndarray): 日付dの時刻tにおける暖冷房区画iのVAV調整前の熱源機の風量（m3/h）
       Theta_ex_d_t(ndarray): 外気温度 (℃)
+      H(ndarray): 4章2節で定める暖房期間の真偽値
+      C(ndarray): 4章2節で定める冷房期間の真偽値
+      M(ndarray): 4章2節で定める中間期の真偽値
 
     Returns:
       日付dの時刻tにおける暖冷房区画iの1時間当たりの床下温度
@@ -83,9 +90,15 @@ def calc_Theta_uf_d_t_2023(L_star_H_d_t_i, L_star_CS_d_t_i, A_A, A_MR, A_OR, r_A
     V_dash_supply_flr1st_d_t  \
       = np.sum(r_A_uf_i[:endi, np.newaxis] * V_dash_supply_d_t_i[:endi, :], axis=0)
 
-    H = Theta_ex_d_t < Theta_in_H
-    C = Theta_ex_d_t > Theta_in_C
-    M = np.logical_not(np.logical_or(H, C))
+    # 暖冷房期間は外気温度の20/27℃判定ではなく、4章2節の地域別期間を使う。
+    H = np.asarray(H, dtype=bool)
+    C = np.asarray(C, dtype=bool)
+    M = np.asarray(M, dtype=bool)
+    for name, season in (("H", H), ("C", C), ("M", M)):
+        if season.shape != (24 * 365,):
+            raise ValueError(f"{name} must have shape (8760,), got {season.shape}")
+    if not np.all(H.astype(int) + C.astype(int) + M.astype(int) == 1):
+        raise ValueError("H, C, M must be mutually exclusive and cover all 8760 hours")
 
     # TODO: 冷房が 暖房と同じでよいかは要検討
     L_star_H_flr1st_d_t = np.zeros(24 * 365)
@@ -120,6 +133,38 @@ def calc_Theta_uf_d_t_2023(L_star_H_d_t_i, L_star_CS_d_t_i, A_A, A_MR, A_OR, r_A
     return Theta_uf_d_t
 
 
+def calc_sum_Theta_dash_g_surf_A_m_d_t(
+        Theta_uf_d_t,
+        Theta_ex_d_t,
+        underfloor_insulation,
+        Theta_g_avg=None,
+    ):
+    '''Return the hourly Appendix E ground-response sum after annual run-up.'''
+    R_g = getattr(jjj_consts, 'R_g', 0.15)
+    Phi_A_0 = 0.025504994
+    if Theta_g_avg is None:
+        Theta_g_avg = algo.get_Theta_g_avg(Theta_ex_d_t)
+    phi_1_A_m = np.array([algo.get_phi_1_A_m(m) for m in range(1, 11)])
+    r_m = np.array([algo.get_r_m(m) for m in range(1, 11)])
+    runup = algo.get_Theta_uf_d_t_runup(underfloor_insulation, Theta_ex_d_t)
+    history = np.concatenate([runup, Theta_uf_d_t])
+    result = np.zeros(24 * 365)
+    Theta_uf_prev = Theta_g_surf_prev = 0.0
+    response = np.zeros(10)
+
+    for index, Theta_uf in enumerate(history):
+        q_g_prev = (Theta_uf_prev - Theta_g_surf_prev) / R_g
+        response = phi_1_A_m * q_g_prev + r_m * response
+        if index >= 24 * 365:
+            result[index - 24 * 365] = np.sum(response)
+        Theta_g_surf_prev = (
+            (Phi_A_0 / R_g) * Theta_uf + np.sum(response) + Theta_g_avg
+        ) / (1.0 + Phi_A_0 / R_g)
+        Theta_uf_prev = Theta_uf
+
+    return result
+
+
 def calc_sum_Theta_dash_g_surf_A_m_runup(Theta_uf_const: float, Theta_g_avg: float) -> float:
     """定数床下温度で1年間の助走計算を行い、吸熱応答の項別成分の合計を返す
 
@@ -135,7 +180,7 @@ def calc_sum_Theta_dash_g_surf_A_m_runup(Theta_uf_const: float, Theta_g_avg: flo
     Returns:
         指数項mの吸熱応答の項別成分の合計 sum(Theta_dash_g_surf_A_m) [℃]
     """
-    R_g = jjj_consts.R_g
+    R_g = getattr(jjj_consts, 'R_g', 0.15)
     Phi_A_0 = 0.025504994  # 吸熱応答係数の初項 (pyhees/section3_1_e.py と同値)
     M = 10
 
