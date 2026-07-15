@@ -10,6 +10,7 @@ from jjjexperiment.section4_2 import (
     _solve_shared_ground_feedback,
     combine_corrected_cooling_output,
     get_appendix_e_ground_parameters,
+    limit_corrected_heating_output,
     merge_annual_floor_temperature,
 )
 from jjjexperiment.underfloor_ac.section3_1_e import (
@@ -67,6 +68,14 @@ def test_cooling_output_adds_latent_after_sensible_underfloor_correction():
     # 顕熱補正後は負値になるため0とし、補正前潜熱だけが残る。
     expected_latent = total_base - sensible_base
     np.testing.assert_allclose(actual, expected_latent)
+
+
+def test_heating_output_is_clipped_after_all_underfloor_corrections():
+    adjusted_after_all_corrections = np.array([-0.4, 0.0, 1.2])
+
+    actual = limit_corrected_heating_output(adjusted_after_all_corrections)
+
+    np.testing.assert_allclose(actual, np.array([0.0, 0.0, 1.2]))
 
 
 def test_underfloor_temperature_uses_distinct_load_and_supply_u_values():
