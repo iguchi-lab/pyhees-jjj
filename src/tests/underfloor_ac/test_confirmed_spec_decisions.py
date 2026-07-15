@@ -11,6 +11,7 @@ from jjjexperiment.section4_2 import (
     combine_corrected_cooling_output,
     get_appendix_e_ground_parameters,
     limit_corrected_heating_output,
+    limit_processed_heating_load,
     merge_annual_floor_temperature,
 )
 from jjjexperiment.underfloor_ac.section3_1_e import (
@@ -76,6 +77,14 @@ def test_heating_output_is_clipped_after_all_underfloor_corrections():
     actual = limit_corrected_heating_output(adjusted_after_all_corrections)
 
     np.testing.assert_allclose(actual, np.array([0.0, 0.0, 1.2]))
+
+
+def test_processed_heating_load_does_not_allow_negative_values():
+    processed_heating_load = np.array([[-0.25, 0.0, 1.5]])
+
+    actual = limit_processed_heating_load(processed_heating_load)
+
+    np.testing.assert_allclose(actual, np.array([[0.0, 0.0, 1.5]]))
 
 
 def test_underfloor_temperature_uses_distinct_load_and_supply_u_values():

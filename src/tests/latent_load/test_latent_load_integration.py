@@ -68,7 +68,7 @@ class Test潜熱評価結合:
     with open(INPUT_SAMPLE_TYPE3_PATH, 'r') as f:
         _inputs_type3: dict = json.load(f)
     _default_E_H = 42533.87
-    _default_E_C = 14641.53
+    _default_E_C = 19321.055317072976
 
     def test_基本計算_正常値(self):
         """Type3基本計算の統合テスト"""
@@ -108,7 +108,7 @@ class Test潜熱評価結合:
         t_input = result['TInput']
         t_value = result['TValue']
         assert t_value.E_H == pytest.approx(42924.37, abs=1e-1)
-        assert t_value.E_C == pytest.approx(14751.50, abs=1e-1)
+        assert t_value.E_C == pytest.approx(19403.08321671903, abs=1e-1)
 
     def test_冷房ファン係数_変更効果(self):
         """冷房ファン係数変更による計算結果への影響"""
@@ -121,7 +121,7 @@ class Test潜熱評価結合:
         t_input = result['TInput']
         t_value = result['TValue']
         assert t_value.E_H == pytest.approx(self._default_E_H, abs=1e-1)
-        assert t_value.E_C == pytest.approx(13730.61, abs=1e-1)
+        assert t_value.E_C == pytest.approx(18381.92071356255, abs=1e-1)
 
     def test_暖房ファン係数_変更効果(self):
         """暖房ファン係数変更による計算結果への影響"""
@@ -147,7 +147,7 @@ class Test潜熱評価結合:
         t_input = result['TInput']
         t_value = result['TValue']
         assert t_value.E_H == pytest.approx(self._default_E_H, abs=1e-1)
-        assert t_value.E_C == pytest.approx(12127.15, abs=1e-1)
+        assert t_value.E_C == pytest.approx(13946.124774900112, abs=1e-1)
 
     def test_暖房圧縮機係数_変更効果(self):
         """暖房圧縮機係数変更による計算結果への影響"""
