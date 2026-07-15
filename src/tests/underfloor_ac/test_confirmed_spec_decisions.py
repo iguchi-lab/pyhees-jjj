@@ -13,6 +13,7 @@ from jjjexperiment.section4_2 import (
     merge_annual_floor_temperature,
 )
 from jjjexperiment.underfloor_ac.section3_1_e import (
+    calc_Theta_uf_d_t_2023,
     calc_sum_Theta_dash_g_surf_A_m_d_t,
 )
 from jjjexperiment.underfloor_ac.section4_2_f46_f48 import (
@@ -126,6 +127,40 @@ def test_formula_9_subtracts_partition_heat_transfer_for_cooling():
 
     # Q* is negative when heat enters the conditioned room from the non-room.
     assert actual[0, t] == pytest.approx(1.0 - (-0.2))
+
+
+def test_target_floor_temperature_uses_official_season_masks():
+    hours = 24 * 365
+    heating = np.zeros(hours, dtype=bool)
+    cooling = np.zeros(hours, dtype=bool)
+    middle = np.ones(hours, dtype=bool)
+    # 外気温25℃でも、4章2節の冷房期間に該当する時刻は冷房式を使う。
+    cooling[0] = True
+    middle[0] = False
+
+    heating_load = np.zeros((5, hours))
+    sensible_cooling_load = np.zeros((5, hours))
+    sensible_cooling_load[0, 0] = 1.0
+    airflow = np.full((5, hours), 100.0)
+    outdoor_temperature = np.full(hours, 25.0)
+
+    actual = calc_Theta_uf_d_t_2023(
+        heating_load,
+        sensible_cooling_load,
+        A_A=120.08,
+        A_MR=29.81,
+        A_OR=51.34,
+        r_A_ufvnt=65.41 / 120.08,
+        V_dash_supply_d_t_i=airflow,
+        Theta_ex_d_t=outdoor_temperature,
+        H=heating,
+        C=cooling,
+        M=middle,
+    )
+
+    assert actual[0] < 27.0
+    assert actual[0] != pytest.approx(outdoor_temperature[0])
+    np.testing.assert_allclose(actual[1:], outdoor_temperature[1:])
 
 
 def test_formula_52_uses_first_floor_contact_area():

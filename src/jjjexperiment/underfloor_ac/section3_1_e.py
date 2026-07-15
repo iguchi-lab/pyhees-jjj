@@ -36,7 +36,11 @@ def get_Theta_uf_d_t_runup() -> np.ndarray:
 
 
 @log_res(['Theta_uf_d_t'])
-def calc_Theta_uf_d_t_2023(L_star_H_d_t_i, L_star_CS_d_t_i, A_A, A_MR, A_OR, r_A_ufvnt, V_dash_supply_d_t_i, Theta_ex_d_t):
+def calc_Theta_uf_d_t_2023(
+        L_star_H_d_t_i, L_star_CS_d_t_i,
+        A_A, A_MR, A_OR, r_A_ufvnt,
+        V_dash_supply_d_t_i, Theta_ex_d_t,
+        H, C, M):
     """定常状態での床下温度を求める
 
     Args:
@@ -48,6 +52,9 @@ def calc_Theta_uf_d_t_2023(L_star_H_d_t_i, L_star_CS_d_t_i, A_A, A_MR, A_OR, r_A
       r_A_ufvnt(list[float]): 当該住戸において、床下空間全体の面積に対する空気を供給する床下空間の面積の比 (-)
       V_dash_supply_d_t_i(ndarray): 日付dの時刻tにおける暖冷房区画iのVAV調整前の熱源機の風量（m3/h）
       Theta_ex_d_t(ndarray): 外気温度 (℃)
+      H(ndarray): 4章2節で定める暖房期間の真偽値
+      C(ndarray): 4章2節で定める冷房期間の真偽値
+      M(ndarray): 4章2節で定める中間期の真偽値
 
     Returns:
       日付dの時刻tにおける暖冷房区画iの1時間当たりの床下温度
@@ -83,9 +90,15 @@ def calc_Theta_uf_d_t_2023(L_star_H_d_t_i, L_star_CS_d_t_i, A_A, A_MR, A_OR, r_A
     V_dash_supply_flr1st_d_t  \
       = np.sum(r_A_uf_i[:endi, np.newaxis] * V_dash_supply_d_t_i[:endi, :], axis=0)
 
-    H = Theta_ex_d_t < Theta_in_H
-    C = Theta_ex_d_t > Theta_in_C
-    M = np.logical_not(np.logical_or(H, C))
+    # 暖冷房期間は外気温度の20/27℃判定ではなく、4章2節の地域別期間を使う。
+    H = np.asarray(H, dtype=bool)
+    C = np.asarray(C, dtype=bool)
+    M = np.asarray(M, dtype=bool)
+    for name, season in (("H", H), ("C", C), ("M", M)):
+        if season.shape != (24 * 365,):
+            raise ValueError(f"{name} must have shape (8760,), got {season.shape}")
+    if not np.all(H.astype(int) + C.astype(int) + M.astype(int) == 1):
+        raise ValueError("H, C, M must be mutually exclusive and cover all 8760 hours")
 
     # TODO: 冷房が 暖房と同じでよいかは要検討
     L_star_H_flr1st_d_t = np.zeros(24 * 365)
