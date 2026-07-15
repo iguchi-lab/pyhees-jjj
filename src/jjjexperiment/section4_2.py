@@ -92,12 +92,6 @@ def limit_corrected_heating_output(
     return np.clip(Q_hat_hs_adjusted_d_t, 0, None)
 
 
-def limit_processed_heating_load(
-        L_dash_H_d_t_i: np.ndarray) -> np.ndarray:
-    """Do not treat room cooling by the supply air as processed heating load."""
-    return np.clip(L_dash_H_d_t_i, 0, None)
-
-
 def combine_corrected_cooling_output(
         Q_hat_hs_base_d_t: np.ndarray,
         Q_hat_hs_CS_base_d_t: np.ndarray,
@@ -1567,14 +1561,12 @@ def _calc_Q_UT_A_once(
         L_dash_CS_d_t_5 = L_dash_CS_d_t_i[4]
     )
     # (5)　間仕切りの熱損失を含む実際の暖房負荷
-    L_dash_H_d_t_i = dc.get_L_dash_H_d_t_i(
-        V_supply_d_t_i, Theta_supply_d_t_i, Theta_HBR_d_t_i, house.region
-    )
-    if (
-        carryover_heat_dto.carry_over_heat == 過剰熱量繰越計算.行う
-        or new_ufac.new_ufac_flg == 床下空調ロジック.変更する
-    ):
-        L_dash_H_d_t_i = limit_processed_heating_load(L_dash_H_d_t_i)
+    if carryover_heat_dto.carry_over_heat == 過剰熱量繰越計算.行う:
+        L_dash_H_d_t_i = np.clip(
+            dc.get_L_dash_H_d_t_i(V_supply_d_t_i, Theta_supply_d_t_i, Theta_HBR_d_t_i, house.region), # 従来式
+            0, None)
+    else:
+        L_dash_H_d_t_i = dc.get_L_dash_H_d_t_i(V_supply_d_t_i, Theta_supply_d_t_i, Theta_HBR_d_t_i, house.region)
     df_output = df_output.assign(
         L_dash_H_d_t_1 = L_dash_H_d_t_i[0],
         L_dash_H_d_t_2 = L_dash_H_d_t_i[1],
