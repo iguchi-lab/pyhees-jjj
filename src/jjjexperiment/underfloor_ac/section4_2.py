@@ -52,13 +52,92 @@ def calc_L_flr1st_area_apportioned_d_t(
         面積按分した1階の暖房負荷、または冷房顕熱負荷 [MJ/h]
     """
     assert Q_hat_hs_d_t.shape == (24 * 365,)
-    assert np.all(Q_hat_hs_d_t >= 0), "熱源機出力は0以上"
     assert A_HCZ_A > 0, "空調対象室の床面積合計は正の値"
     assert 0 <= A_s_ufvnt_HCZ_1F <= A_HCZ_A, \
         "1階空調対象室面積は空調対象室の床面積合計以下"
 
     L_flr1st_d_t = Q_hat_hs_d_t * A_s_ufvnt_HCZ_1F / A_HCZ_A
     return -L_flr1st_d_t if cooling else L_flr1st_d_t
+
+
+def calc_Q_hat_hs_H_raw_d_t(
+        Q: float,
+        A_A: float,
+        V_vent_l_d_t: np.ndarray,
+        V_vent_g_i: np.ndarray,
+        mu_H: float | None,
+        J_d_t: np.ndarray,
+        q_gen_d_t: np.ndarray,
+        n_p_d_t: np.ndarray,
+        q_p_H: float,
+        Theta_ex_d_t: np.ndarray,
+        region: int,
+    ) -> np.ndarray:
+    """Return the unclipped heating part of equation (40).
+
+    The ordinary equation (40) output is clipped to zero before it is used as
+    heat-source output.  The underfloor preliminary balance calculation in the
+    reference workbook instead apportions the value *before* that clipping
+    (``負荷計算!CB``).  Keeping this value separate avoids allowing a negative
+    heat-source output while still reproducing the workbook's balance
+    temperature.
+    """
+    H, _, _ = dc.get_season_array_d_t(region)
+    result = np.zeros(24 * 365)
+    if mu_H is None:
+        return result
+
+    c_p_air = dc.get_c_p_air()
+    rho_air = dc.get_rho_air()
+    Theta_set_H = dc.get_Theta_set_H()
+    result[H] = (
+        (
+            (Q - 0.35 * 0.5 * 2.4) * A_A
+            + c_p_air * rho_air
+            * (V_vent_l_d_t[H] + np.sum(V_vent_g_i[:5])) / 3600
+        )
+        * (Theta_set_H - Theta_ex_d_t[H])
+        - mu_H * A_A * J_d_t[H]
+        - q_gen_d_t[H]
+        - n_p_d_t[H] * q_p_H
+    ) * 3600 * 1e-6
+    return result
+
+
+def calc_Q_hat_hs_CS_raw_d_t(
+        Q: float,
+        A_A: float,
+        V_vent_l_d_t: np.ndarray,
+        V_vent_g_i: np.ndarray,
+        mu_C: float | None,
+        J_d_t: np.ndarray,
+        q_gen_d_t: np.ndarray,
+        n_p_d_t: np.ndarray,
+        q_p_CS: float,
+        Theta_ex_d_t: np.ndarray,
+        region: int,
+    ) -> np.ndarray:
+    """Return the unclipped, signed sensible-cooling part of equation (40)."""
+    _, C, _ = dc.get_season_array_d_t(region)
+    result = np.zeros(24 * 365)
+    if mu_C is None:
+        return result
+
+    c_p_air = dc.get_c_p_air()
+    rho_air = dc.get_rho_air()
+    Theta_set_C = dc.get_Theta_set_C()
+    result[C] = (
+        (
+            (Q - 0.35 * 0.5 * 2.4) * A_A
+            + c_p_air * rho_air
+            * (V_vent_l_d_t[C] + np.sum(V_vent_g_i[:5])) / 3600
+        )
+        * (Theta_ex_d_t[C] - Theta_set_C)
+        + mu_C * A_A * J_d_t[C]
+        + q_gen_d_t[C]
+        + n_p_d_t[C] * q_p_CS
+    ) * 3600 * 1e-6
+    return result
 
 
 def get_A_s_ufac_i(
@@ -132,7 +211,9 @@ def calc_Theta_uf(
             delta_Theta = max(Theta_in - Theta_ex, 0)
             # 元の負荷計算に含まれる一般床断熱の損失を差し引く。
             a2 = U_s_load * A_s_ufvnt_HCZ_1F * delta_Theta * H_floor * 3.6
-            assert L_flr1st >= 0, "暖房期の負荷は正の値"
+            # The workbook uses the unclipped equation (40) heating value for
+            # this preliminary balance, so L_flr1st may be negative even
+            # though the final heat-source output remains bounded at zero.
             Theta_uf = (L_flr1st * 1e+3 - a2 + Theta_in * b) / b
             return Theta_uf
 
@@ -140,7 +221,8 @@ def calc_Theta_uf(
             delta_Theta = max(Theta_ex - Theta_in, 0)
             # 元の負荷計算に含まれる一般床断熱の損失を差し引く。
             a2 = U_s_load * A_s_ufvnt_HCZ_1F * delta_Theta * H_floor * 3.6
-            assert L_flr1st <= 0, "冷房期の負荷は負の値"
+            # The unclipped sensible-cooling value can have either sign in
+            # the workbook's preliminary balance calculation.
             Theta_uf = (L_flr1st * 1e+3 + a2 + Theta_in * b) / b
             return Theta_uf
 

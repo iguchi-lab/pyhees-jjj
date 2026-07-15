@@ -144,7 +144,7 @@ def merge_annual_floor_temperature(
 
 def calc_intermediate_floor_temperature(
         V_dash_supply_1F_d_t: np.ndarray,
-        Theta_star_HBR_d_t: np.ndarray,
+        Theta_sa_d_t: np.ndarray,
         Theta_ex_d_t: np.ndarray,
         sum_Theta_dash_g_surf_A_m_d_t: np.ndarray,
         U_s_supply: float,
@@ -162,13 +162,25 @@ def calc_intermediate_floor_temperature(
     K2 = phi * L_uf
     K3 = (A_s_ufac_A / R_g) / (1.0 + Phi_A_0 / R_g)
     return (
-        C_sa_d_t * Theta_star_HBR_d_t
+        C_sa_d_t * Theta_sa_d_t
         + (
-            K1 * Theta_star_HBR_d_t
+            K1 * Theta_sa_d_t
             + K2 * Theta_ex_d_t
             + K3 * (sum_Theta_dash_g_surf_A_m_d_t + Theta_g_avg)
         ) * 3.6
     ) / (C_sa_d_t + (K1 + K2 + K3) * 3.6)
+
+
+def get_underfloor_no_load_temperature(
+        Theta_star_NR_d_t: np.ndarray,
+        M: np.ndarray) -> np.ndarray:
+    """Return the workbook's equation (14) reference temperature.
+
+    Heating/cooling no-load hours use the load-balance non-room temperature.
+    Intermediate-season hours use the 20 degC reference (``負荷計算!BS``),
+    rather than the outdoor-following non-room temperature.
+    """
+    return np.where(M, dc.get_Theta_set_H(), Theta_star_NR_d_t)
 
 
 def _calc_Q_UT_A_once(
@@ -374,6 +386,14 @@ def _calc_Q_UT_A_once(
     Q_hat_hs_d_t, Q_hat_hs_CS_d_t = dc.calc_Q_hat_hs_d_t(skin.Q, house.A_A, V_vent_l_d_t, V_vent_g_i, skin.mu_H, skin.mu_C, J_d_t, q_gen_d_t, n_p_d_t, q_p_H,
                                      q_p_CS, q_p_CL, X_ex_d_t, w_gen_d_t, Theta_ex_d_t, L_wtr, house.region)
     df_output['Q_hat_hs_d_t'] = Q_hat_hs_d_t
+    Q_hat_hs_H_raw_d_t = jjj_ufac_dc.calc_Q_hat_hs_H_raw_d_t(
+        skin.Q, house.A_A, V_vent_l_d_t, V_vent_g_i, skin.mu_H,
+        J_d_t, q_gen_d_t, n_p_d_t, q_p_H, Theta_ex_d_t, house.region,
+    )
+    Q_hat_hs_CS_raw_d_t = jjj_ufac_dc.calc_Q_hat_hs_CS_raw_d_t(
+        skin.Q, house.A_A, V_vent_l_d_t, V_vent_g_i, skin.mu_C,
+        J_d_t, q_gen_d_t, n_p_d_t, q_p_CS, Theta_ex_d_t, house.region,
+    )
     # 式(40)の床下補正前の出力。1階負荷の面積按分にはこの値を用いる。
     Q_hat_hs_base_d_t = Q_hat_hs_d_t.copy()
     Q_hat_hs_CS_base_d_t = Q_hat_hs_CS_d_t.copy()
@@ -504,11 +524,12 @@ def _calc_Q_UT_A_once(
         match ac_setting:
             case HeatingAcSetting():
                 L_d_t_flr1st = jjj_ufac_dc.calc_L_flr1st_area_apportioned_d_t(
-                    Q_hat_hs_base_d_t, A_s_ufac_HCZ_1F, A_HCZ_A, cooling=False
+                    Q_hat_hs_H_raw_d_t, A_s_ufac_HCZ_1F, A_HCZ_A, cooling=False
                 )
             case CoolingAcSetting():
                 L_d_t_flr1st = jjj_ufac_dc.calc_L_flr1st_area_apportioned_d_t(
-                    Q_hat_hs_CS_base_d_t, A_s_ufac_HCZ_1F, A_HCZ_A, cooling=True
+                    Q_hat_hs_CS_raw_d_t, A_s_ufac_HCZ_1F, A_HCZ_A,
+                    cooling=True,
                 )
                 # 床下温度の熱収支には冷房顕熱出力のみを用いる。
             case _:
@@ -913,8 +934,13 @@ def _calc_Q_UT_A_once(
 
             # L_star_H_d_t_i，L_star_CS_d_t_iの暖冷房区画1～5を合算し0以上だった場合の順序で計算
             # (14)　熱源機の出口における空気温度
+            Theta_no_load_d_t = (
+                get_underfloor_no_load_temperature(Theta_star_NR_d_t, M)
+                if new_ufac.new_ufac_flg == 床下空調ロジック.変更する
+                else Theta_NR_d_t
+            )
             Theta_hs_out_d_t = dc.get_Theta_hs_out_d_t(ac_setting.VAV, Theta_req_d_t_i, V_dash_supply_d_t_i,
-                                                    L_star_H_d_t_i, L_star_CS_d_t_i, house.region, Theta_NR_d_t,
+                                                    L_star_H_d_t_i, L_star_CS_d_t_i, house.region, Theta_no_load_d_t,
                                                     Theta_hs_out_max_H_d_t, Theta_hs_out_min_C_d_t)
 
             # (43)　暖冷房区画𝑖の吹き出し風量
@@ -1217,8 +1243,13 @@ def _calc_Q_UT_A_once(
 
         # L_star_H_d_t_i，L_star_CS_d_t_iの暖冷房区画1～5を合算し0以上だった場合の順序で計算
         # (14)　熱源機の出口における空気温度
+        Theta_no_load_d_t = (
+            get_underfloor_no_load_temperature(Theta_star_NR_d_t, M)
+            if new_ufac.new_ufac_flg == 床下空調ロジック.変更する
+            else Theta_NR_d_t
+        )
         Theta_hs_out_d_t = dc.get_Theta_hs_out_d_t(ac_setting.VAV, Theta_req_d_t_i, V_dash_supply_d_t_i,
-                                                L_star_H_d_t_i, L_star_CS_d_t_i, house.region, Theta_NR_d_t,
+                                                L_star_H_d_t_i, L_star_CS_d_t_i, house.region, Theta_no_load_d_t,
                                                 Theta_hs_out_max_H_d_t, Theta_hs_out_min_C_d_t)
 
         # (43)　暖冷房区画𝑖の吹き出し風量
@@ -1497,8 +1528,13 @@ def _calc_Q_UT_A_once(
     """ 吹出口 - 熱源機の出口 """
     # L_star_H_d_t_i，L_star_CS_d_t_iの暖冷房区画1～5を合算し0以下だった場合の為に再計算
     # (14)　熱源機の出口における空気温度
+    Theta_no_load_d_t = (
+        get_underfloor_no_load_temperature(Theta_star_NR_d_t, M)
+        if new_ufac.new_ufac_flg == 床下空調ロジック.変更する
+        else Theta_NR_d_t
+    )
     Theta_hs_out_d_t = dc.get_Theta_hs_out_d_t(ac_setting.VAV, Theta_req_d_t_i, V_dash_supply_d_t_i,
-                                            L_star_H_d_t_i, L_star_CS_d_t_i, house.region, Theta_NR_d_t,
+                                            L_star_H_d_t_i, L_star_CS_d_t_i, house.region, Theta_no_load_d_t,
                                             Theta_hs_out_max_H_d_t, Theta_hs_out_min_C_d_t)
     df_output['Theta_hs_out_d_t'] = Theta_hs_out_d_t
 
@@ -1660,7 +1696,7 @@ def _calc_Q_UT_A_once(
         )
         Theta_uf_M_actual_d_t = calc_intermediate_floor_temperature(
             np.sum(V_dash_supply_d_t_i[:2, :], axis=0),
-            Theta_star_HBR_d_t,
+            Theta_hs_out_d_t,
             Theta_ex_d_t,
             response_d_t,
             U_s_supply,

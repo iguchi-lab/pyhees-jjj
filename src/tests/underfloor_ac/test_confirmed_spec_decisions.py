@@ -8,6 +8,8 @@ from jjjexperiment.common import JJJ_HCM
 from jjjexperiment.inputs.options import 床下空調ロジック
 from jjjexperiment.section4_2 import (
     _solve_shared_ground_feedback,
+    calc_intermediate_floor_temperature,
+    get_underfloor_no_load_temperature,
     combine_corrected_cooling_output,
     get_appendix_e_ground_parameters,
     limit_corrected_heating_output,
@@ -24,6 +26,8 @@ from jjjexperiment.underfloor_ac.section4_2_f46_f48 import (
 from jjjexperiment.underfloor_ac.section4_2_f52 import get_Theta_star_NR
 from jjjexperiment.underfloor_ac.section4_2 import (
     calc_L_flr1st_area_apportioned_d_t,
+    calc_Q_hat_hs_CS_raw_d_t,
+    calc_Q_hat_hs_H_raw_d_t,
     calc_Theta_uf,
     calc_delta_L_uf2outdoor,
     get_r_A_NR_uf_1F,
@@ -52,6 +56,42 @@ def test_first_floor_load_uses_conditioned_area_ratio():
     assert heating[0] == pytest.approx(expected)
     assert heating[0] == pytest.approx(10.5862542965)
     assert cooling[0] == pytest.approx(-expected)
+
+
+def test_preliminary_floor_balance_preserves_unclipped_equation_40_sign():
+    hours = 24 * 365
+    zeros = np.zeros(hours)
+    outdoor = np.full(hours, 30.0)
+    ventilation = np.zeros(hours)
+    general_ventilation = np.zeros(5)
+
+    raw_heating = calc_Q_hat_hs_H_raw_d_t(
+        Q=1.0, A_A=1.0,
+        V_vent_l_d_t=ventilation, V_vent_g_i=general_ventilation,
+        mu_H=1.0, J_d_t=np.full(hours, 100.0),
+        q_gen_d_t=zeros, n_p_d_t=zeros, q_p_H=0.0,
+        Theta_ex_d_t=outdoor, region=6,
+    )
+    raw_cooling = calc_Q_hat_hs_CS_raw_d_t(
+        Q=1.0, A_A=1.0,
+        V_vent_l_d_t=ventilation, V_vent_g_i=general_ventilation,
+        mu_C=0.0, J_d_t=zeros,
+        q_gen_d_t=zeros, n_p_d_t=zeros, q_p_CS=0.0,
+        Theta_ex_d_t=np.full(hours, 20.0), region=6,
+    )
+
+    heating_mask, cooling_mask, _ = dc.get_season_array_d_t(6)
+    assert np.all(raw_heating[heating_mask] < 0.0)
+    assert np.all(raw_cooling[cooling_mask] < 0.0)
+
+    apportioned = calc_L_flr1st_area_apportioned_d_t(
+        raw_cooling, 46.37, 81.15,
+        cooling=True,
+    )
+    np.testing.assert_allclose(
+        apportioned[cooling_mask],
+        -raw_cooling[cooling_mask] * 46.37 / 81.15,
+    )
 
 
 def test_cooling_output_adds_latent_after_sensible_underfloor_correction():
@@ -170,6 +210,52 @@ def test_target_floor_temperature_uses_official_season_masks():
     assert actual[0] < 27.0
     assert actual[0] != pytest.approx(outdoor_temperature[0])
     np.testing.assert_allclose(actual[1:], outdoor_temperature[1:])
+
+
+def test_intermediate_floor_temperature_uses_heat_source_outlet_temperature():
+    hours = 24 * 365
+    airflow = np.full(hours, 100.0)
+    outlet = np.full(hours, 20.0)
+    outdoor = np.full(hours, 10.0)
+    response = np.zeros(hours)
+
+    actual = calc_intermediate_floor_temperature(
+        airflow,
+        outlet,
+        outdoor,
+        response,
+        U_s_supply=2.223,
+        A_s_ufac_A=65.41,
+        phi=0.846,
+        L_uf=32.35,
+        R_g=0.15,
+        Phi_A_0=0.025504994,
+        Theta_g_avg=15.7,
+    )
+
+    warmer_outlet = calc_intermediate_floor_temperature(
+        airflow,
+        outlet + 1.0,
+        outdoor,
+        response,
+        U_s_supply=2.223,
+        A_s_ufac_A=65.41,
+        phi=0.846,
+        L_uf=32.35,
+        R_g=0.15,
+        Phi_A_0=0.025504994,
+        Theta_g_avg=15.7,
+    )
+
+    assert np.all(warmer_outlet > actual)
+
+
+def test_underfloor_no_load_temperature_uses_20_degrees_in_middle_season():
+    middle = np.array([False, True, False])
+    actual = get_underfloor_no_load_temperature(
+        np.array([18.0, 25.0, 28.0]), middle,
+    )
+    np.testing.assert_allclose(actual, np.array([18.0, 20.0, 28.0]))
 
 
 def test_formula_52_uses_first_floor_contact_area():
