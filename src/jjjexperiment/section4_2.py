@@ -78,12 +78,74 @@ class ActiveAcSetting:
 
 @dataclass
 class AnnualGroundFeedbackContext:
-    """暖房・冷房で共有する年間の実床下温度履歴。"""
+    """暖房・冷房で共有する、時刻順に確定した年間実床下温度履歴。"""
     heat_ac_setting: HeatingAcSetting
     cool_ac_setting: CoolingAcSetting
     V_hs_dsgn_H: float
     V_hs_dsgn_C: float
     Theta_uf_feedback_d_t: np.ndarray | None = None
+    V_dash_supply_H_d_t_i: np.ndarray | None = None
+    V_dash_supply_C_d_t_i: np.ndarray | None = None
+
+
+@dataclass
+class SequentialGroundModeInputs:
+    """Excelと同じ1時間逐次計算に必要な、暖房または冷房側の入力。"""
+    is_heating: bool
+    ac_type: 計算モデル
+    VAV: bool
+    hs_CAV: bool
+    Q_hat_hs_before_ground_d_t: np.ndarray
+    Q_hat_hs_base_d_t: np.ndarray
+    Q_hat_hs_CS_base_d_t: np.ndarray
+    Theta_uf_preliminary_d_t: np.ndarray
+    Theta_ex_d_t: np.ndarray
+    Theta_star_HBR_d_t: np.ndarray
+    Theta_sur_d_t_i: np.ndarray
+    r_supply_des_d_t_i: np.ndarray
+    V_dash_supply_d_t_i: np.ndarray
+    V_vent_g_i: np.ndarray
+    V_hs_min: float
+    V_hs_dsgn: float
+    Q_hs_rtd: float
+    Q_hs_max_H_d_t: np.ndarray
+    Q_hs_max_C_d_t: np.ndarray
+    Q_hs_max_CS_independent_d_t: np.ndarray
+    L_H_d_t_i: np.ndarray
+    L_CS_d_t_i: np.ndarray
+    L_CL_d_t_i: np.ndarray
+    L_dash_H_R_d_t_i: np.ndarray
+    L_dash_CS_R_d_t_i: np.ndarray
+    V_vent_l_NR_d_t: np.ndarray
+    L_H_NR_d_t_A: np.ndarray
+    L_CS_NR_d_t_A: np.ndarray
+    A_HCZ_i: np.ndarray
+    A_prt_i: np.ndarray
+    A_s_ufac_i: np.ndarray
+    A_NR: float
+    A_prt_A: float
+    A_s_ufac_A: float
+    A_s_ufac_HCZ_1F: float
+    U_prt: float
+    U_s_load: float
+    U_s_supply: float
+    Q: float
+    phi: float
+    L_uf: float
+    R_g: float
+    Phi_A_0: float
+    Theta_g_avg: float
+    r_A_NR_uf_1F: float
+    l_duct_i: np.ndarray
+    HCM: np.ndarray
+
+
+@dataclass
+class GroundResponseState:
+    """3章付録Eの地盤応答を前時刻から更新する状態。"""
+    Theta_uf_prev: float
+    Theta_g_surf_prev: float
+    response_m: np.ndarray
 
 
 def limit_corrected_heating_output(
@@ -117,13 +179,6 @@ def get_appendix_e_ground_parameters(
         algo.get_phi(region, Q),
         algo.get_Theta_g_avg(Theta_ex_d_t),
     )
-
-
-# 地盤応答へ実際の床下温度を反映する反復計算の設定。
-# 現行の計算は8760時間をベクトル計算するため、1回目で実際の床下温度を求め、
-# 2回目以降の式(40)ではその系列の前時刻値を地盤応答へ渡す。
-GROUND_FEEDBACK_MAX_ITERATIONS = 24
-GROUND_FEEDBACK_TOLERANCE = 1.0e-4
 
 
 def merge_annual_floor_temperature(
@@ -183,6 +238,345 @@ def get_underfloor_no_load_temperature(
     return np.where(M, dc.get_Theta_set_H(), Theta_star_NR_d_t)
 
 
+def _runup_ground_response_state(
+        Theta_ex_d_t: np.ndarray,
+        underfloor_insulation: bool,
+        Theta_g_avg: float) -> GroundResponseState:
+    """付録Eの1年間の助走計算を行い、1月1日1:00直前の状態を返す。"""
+    R_g = jjj_consts.R_g
+    Phi_A_0 = 0.025504994
+    phi_1_A_m = np.array([algo.get_phi_1_A_m(m) for m in range(1, 11)])
+    r_m = np.array([algo.get_r_m(m) for m in range(1, 11)])
+    state = GroundResponseState(0.0, 0.0, np.zeros(10))
+    for Theta_uf in algo.get_Theta_uf_d_t_runup(
+            underfloor_insulation, Theta_ex_d_t):
+        q_g_prev = (state.Theta_uf_prev - state.Theta_g_surf_prev) / R_g
+        response_m = phi_1_A_m * q_g_prev + r_m * state.response_m
+        Theta_g_surf = (
+            (Phi_A_0 / R_g) * Theta_uf
+            + np.sum(response_m)
+            + Theta_g_avg
+        ) / (1.0 + Phi_A_0 / R_g)
+        state = GroundResponseState(Theta_uf, Theta_g_surf, response_m)
+    return state
+
+
+def _get_floor_reference_vectors(
+        inputs: SequentialGroundModeInputs,
+        t: int) -> tuple[np.ndarray, np.ndarray]:
+    Theta_star = np.zeros(12)
+    H_star = np.zeros(12)
+    for i in range(12):
+        if inputs.L_dash_H_R_d_t_i[i, t] > 0:
+            Theta_star[i], H_star[i] = 20.0, 1.0
+        elif inputs.L_dash_CS_R_d_t_i[i, t] > 0:
+            Theta_star[i], H_star[i] = 27.0, 1.0
+        elif inputs.Theta_ex_d_t[t] < 20.0:
+            Theta_star[i], H_star[i] = 20.0, 1.0
+        elif inputs.Theta_ex_d_t[t] <= 27.0:
+            Theta_star[i], H_star[i] = inputs.Theta_ex_d_t[t], 0.7
+        else:
+            Theta_star[i], H_star[i] = 27.0, 1.0
+    return Theta_star, H_star
+
+
+def _calc_floor_temperature_from_supply(
+        inputs: SequentialGroundModeInputs,
+        t: int,
+        response: float,
+        Theta_sa: float) -> float:
+    Theta_star, H_star = _get_floor_reference_vectors(inputs, t)
+    C_sa = algo.get_ro_air() * algo.get_c_p_air() * float(
+        np.sum(inputs.V_dash_supply_d_t_i[:2, t])
+    )
+    K_room = inputs.U_s_supply * inputs.A_s_ufac_i[:, 0] * H_star
+    K_out = inputs.phi * inputs.L_uf
+    K_gnd = (
+        (inputs.A_s_ufac_A / inputs.R_g)
+        / (1.0 + inputs.Phi_A_0 / inputs.R_g)
+    )
+    numerator = C_sa * Theta_sa + (
+        np.sum(K_room * Theta_star)
+        + K_out * inputs.Theta_ex_d_t[t]
+        + K_gnd * (response + inputs.Theta_g_avg)
+    ) * 3.6
+    denominator = C_sa + (np.sum(K_room) + K_out + K_gnd) * 3.6
+    return float(numerator / denominator)
+
+
+def _calc_required_supply_temperature(
+        inputs: SequentialGroundModeInputs,
+        t: int,
+        response: float,
+        Theta_uf_target: float) -> float:
+    if inputs.is_heating \
+            and inputs.L_dash_H_R_d_t_i[0, t] > 0 \
+            and Theta_uf_target < 20.0:
+        return 20.0
+    if not inputs.is_heating \
+            and inputs.L_dash_CS_R_d_t_i[0, t] > 0 \
+            and Theta_uf_target > 27.0:
+        return 27.0
+
+    Theta_star, H_star = _get_floor_reference_vectors(inputs, t)
+    C_sa = algo.get_ro_air() * algo.get_c_p_air() * float(
+        np.sum(inputs.V_dash_supply_d_t_i[:2, t])
+    )
+    K_room = inputs.U_s_supply * inputs.A_s_ufac_i[:, 0] * H_star
+    K_out = inputs.phi * inputs.L_uf
+    K_gnd = (
+        (inputs.A_s_ufac_A / inputs.R_g)
+        / (1.0 + inputs.Phi_A_0 / inputs.R_g)
+    )
+    other = (
+        np.sum(K_room * Theta_star)
+        + K_out * inputs.Theta_ex_d_t[t]
+        + K_gnd * (response + inputs.Theta_g_avg)
+    ) * 3.6
+    denominator = C_sa + (np.sum(K_room) + K_out + K_gnd) * 3.6
+    if C_sa <= 0:
+        return Theta_uf_target
+    Theta_sa = (Theta_uf_target * denominator - other) / C_sa
+    return float(np.clip(
+        Theta_sa,
+        max(Theta_uf_target - 50.0, 0.0),
+        Theta_uf_target + 50.0,
+    ))
+
+
+def _calc_v_dash_hs_scalar(
+        inputs: SequentialGroundModeInputs,
+        Q_hat_hs: float) -> float:
+    if inputs.hs_CAV:
+        return inputs.V_hs_dsgn
+    # 新床下空調ではExcelの式(36)に合わせ、機器モデルにかかわらず
+    # 最低風量・定格出力・設計風量による線形補間を用いる。
+    if Q_hat_hs < inputs.Q_hs_rtd:
+        return float(
+            (inputs.V_hs_dsgn - inputs.V_hs_min)
+            / inputs.Q_hs_rtd * max(Q_hat_hs, 0.0)
+            + inputs.V_hs_min
+        )
+    return inputs.V_hs_dsgn
+
+
+def _calc_mode_floor_temperature(
+        inputs: SequentialGroundModeInputs,
+        t: int,
+        response: float) -> float:
+    delta_ground = jjj_ufac_dc.calc_delta_L_uf2gnd(
+        1.0 if inputs.is_heating else None,
+        None if inputs.is_heating else 1.0,
+        inputs.A_s_ufac_A,
+        inputs.R_g,
+        inputs.Phi_A_0,
+        inputs.Theta_uf_preliminary_d_t[t],
+        response,
+        inputs.Theta_g_avg,
+    )
+    adjusted = inputs.Q_hat_hs_before_ground_d_t[t] + delta_ground
+    if inputs.is_heating:
+        Q_hat_hs = max(adjusted, 0.0)
+    else:
+        sensible = max(
+            inputs.Q_hat_hs_CS_base_d_t[t]
+            + adjusted - inputs.Q_hat_hs_base_d_t[t],
+            0.0,
+        )
+        latent = max(
+            inputs.Q_hat_hs_base_d_t[t]
+            - inputs.Q_hat_hs_CS_base_d_t[t],
+            0.0,
+        )
+        Q_hat_hs = sensible + latent
+
+    # Excelの負荷計算!CH:CMと同じく、式(40)の床下補正後出力から
+    # 式(36)のVAV調整前風量を確定する。
+    V_dash_hs = _calc_v_dash_hs_scalar(inputs, Q_hat_hs)
+    V_dash_supply_i = np.maximum(
+        inputs.r_supply_des_d_t_i[:, t] * V_dash_hs,
+        inputs.V_vent_g_i[:5],
+    )
+    inputs.V_dash_supply_d_t_i[:, t] = V_dash_supply_i
+
+    Theta_star_NR = get_Theta_star_NR(
+        Theta_star_HBR=inputs.Theta_star_HBR_d_t[t],
+        Q=inputs.Q,
+        A_NR=inputs.A_NR,
+        V_vent_l_NR=inputs.V_vent_l_NR_d_t[t],
+        V_dash_supply_A=float(np.sum(V_dash_supply_i)),
+        U_prt=inputs.U_prt,
+        A_prt_A=inputs.A_prt_A,
+        L_H_NR_A=inputs.L_H_NR_d_t_A[t],
+        L_CS_NR_A=inputs.L_CS_NR_d_t_A[t],
+        Theta_NR=20.0 if inputs.is_heating else 27.0,
+        Theta_uf=inputs.Theta_uf_preliminary_d_t[t],
+        HCM=inputs.HCM[t],
+        r_A_NR_1F=inputs.r_A_NR_uf_1F,
+    )
+    Q_trs_i = (
+        inputs.U_prt * inputs.A_prt_i[:5]
+        * (inputs.Theta_star_HBR_d_t[t] - Theta_star_NR)
+        * 3600.0e-6
+    )
+    L_star_H_i = np.zeros(5)
+    L_star_CS_i = np.zeros(5)
+    if inputs.is_heating:
+        mask = inputs.L_H_d_t_i[:5, t] > 0
+        L_star_H_i[mask] = np.maximum(
+            inputs.L_H_d_t_i[:5, t][mask] + Q_trs_i[mask], 0.0
+        )
+        floor_loss = jjj_ufac_dc.calc_delta_L_room2uf_i(
+            inputs.U_s_load,
+            inputs.A_s_ufac_i,
+            abs(inputs.Theta_star_HBR_d_t[t] - inputs.Theta_ex_d_t[t]),
+        )[:5, 0]
+        L_star_H_i[mask] -= floor_loss[mask]
+    else:
+        mask = inputs.L_CS_d_t_i[:5, t] > 0
+        L_star_CS_i[mask] = np.maximum(
+            inputs.L_CS_d_t_i[:5, t][mask] - Q_trs_i[mask], 0.0
+        )
+        floor_gain = jjj_ufac_dc.calc_delta_L_room2uf_i(
+            inputs.U_s_load,
+            inputs.A_s_ufac_i,
+            abs(inputs.Theta_star_HBR_d_t[t] - inputs.Theta_ex_d_t[t]),
+        )[:5, 0]
+        L_star_CS_i[mask] += floor_gain[mask]
+
+    contact = np.array([algo.get_r_A_uf_i(i) for i in (1, 2)])
+    V_1F = float(np.sum(contact * V_dash_supply_i[:2]))
+    Q1 = algo.get_ro_air() * algo.get_c_p_air() * V_1F
+    Q2 = inputs.U_s_supply * inputs.A_s_ufac_HCZ_1F * 3.6
+    if inputs.is_heating:
+        L_1F = float(np.sum(contact * L_star_H_i[:2]) * 1000.0)
+        Theta_uf_target = (L_1F + 20.0 * (Q1 + Q2)) / (Q1 + Q2)
+    else:
+        L_1F = float(np.sum(contact * L_star_CS_i[:2]) * 1000.0)
+        Theta_uf_target = (-L_1F + 27.0 * (Q1 + Q2)) / (Q1 + Q2)
+
+    c_p_air = dc.get_c_p_air()
+    rho_air = dc.get_rho_air()
+    phi_i = dc.get_phi_i()
+    req_i = np.zeros(5)
+    if inputs.is_heating:
+        req_i = inputs.Theta_sur_d_t_i[:, t] + (
+            inputs.Theta_star_HBR_d_t[t]
+            + L_star_H_i * 1.0e6 / (c_p_air * rho_air * V_dash_supply_i)
+            - inputs.Theta_sur_d_t_i[:, t]
+        ) * np.exp(
+            phi_i * inputs.l_duct_i * 3600.0
+            / (c_p_air * rho_air * V_dash_supply_i)
+        )
+        req_i = np.maximum(req_i, inputs.Theta_star_HBR_d_t[t])
+    else:
+        req_i = inputs.Theta_sur_d_t_i[:, t] - (
+            inputs.Theta_sur_d_t_i[:, t]
+            - inputs.Theta_star_HBR_d_t[t]
+            + L_star_CS_i * 1.0e6 / (c_p_air * rho_air * V_dash_supply_i)
+        ) * np.exp(
+            phi_i * inputs.l_duct_i * 3600.0
+            / (c_p_air * rho_air * V_dash_supply_i)
+        )
+        req_i = np.minimum(req_i, inputs.Theta_star_HBR_d_t[t])
+    required_supply = _calc_required_supply_temperature(
+        inputs, t, response, Theta_uf_target
+    )
+    req_i[:2] = required_supply
+    req_i = (
+        np.maximum(req_i, 20.0)
+        if inputs.is_heating else np.minimum(req_i, 27.0)
+    )
+
+    total_load = float(np.sum(L_star_H_i if inputs.is_heating else L_star_CS_i))
+    if total_load <= 0:
+        Theta_hs_out = Theta_star_NR
+    elif inputs.VAV or jjj_consts.change_heat_source_outlet_required_temperature == 2:
+        Theta_hs_out = float(np.max(req_i) if inputs.is_heating else np.min(req_i))
+    else:
+        Theta_hs_out = float(np.sum(req_i * V_dash_supply_i) / np.sum(V_dash_supply_i))
+
+    if inputs.is_heating:
+        max_out = np.clip(
+            Theta_star_NR
+            + inputs.Q_hs_max_H_d_t[t] * 1.0e6
+            / (c_p_air * rho_air * np.sum(V_dash_supply_i)),
+            None,
+            jjj_consts.Theta_hs_out_max_H_d_t_limit,
+        )
+        Theta_hs_out = min(Theta_hs_out, float(max_out))
+    else:
+        if inputs.ac_type in (
+                計算モデル.ダクト式セントラル空調機,
+                計算モデル.RAC活用型全館空調_潜熱評価モデル):
+            sensible = float(np.sum(L_star_CS_i))
+            latent = float(np.sum(np.where(
+                inputs.L_CS_d_t_i[:5, t] > 0,
+                inputs.L_CL_d_t_i[:5, t],
+                0.0,
+            )))
+            latent_adjusted = min(1.5 * sensible, latent)
+            total = sensible + latent_adjusted
+            shf = sensible / total if total > 0 else 0.0
+            Q_hs_max_CS = inputs.Q_hs_max_C_d_t[t] * shf
+        else:
+            Q_hs_max_CS = inputs.Q_hs_max_CS_independent_d_t[t]
+        min_out = np.clip(
+            Theta_star_NR
+            - Q_hs_max_CS * 1.0e6
+            / (c_p_air * rho_air * np.sum(V_dash_supply_i)),
+            jjj_consts.Theta_hs_out_min_C_d_t_limit,
+            None,
+        )
+        Theta_hs_out = max(Theta_hs_out, float(min_out))
+
+    return _calc_floor_temperature_from_supply(
+        inputs, t, response, Theta_hs_out
+    )
+
+
+def _solve_shared_ground_sequential(
+        heating: SequentialGroundModeInputs,
+        cooling: SequentialGroundModeInputs,
+        H: np.ndarray,
+        C: np.ndarray,
+        M: np.ndarray,
+        underfloor_insulation: bool) -> tuple[np.ndarray, np.ndarray]:
+    """Excelと同じく、8760時間を過去方向へ戻らず1回だけ前進計算する。"""
+    state = _runup_ground_response_state(
+        heating.Theta_ex_d_t,
+        underfloor_insulation,
+        heating.Theta_g_avg,
+    )
+    floor = np.zeros(24 * 365)
+    response = np.zeros(24 * 365)
+    for t in range(24 * 365):
+        q_g_prev = (
+            state.Theta_uf_prev - state.Theta_g_surf_prev
+        ) / heating.R_g
+        phi_1_A_m = np.array([algo.get_phi_1_A_m(m) for m in range(1, 11)])
+        r_m = np.array([algo.get_r_m(m) for m in range(1, 11)])
+        response_m = phi_1_A_m * q_g_prev + r_m * state.response_m
+        response[t] = float(np.sum(response_m))
+        if H[t]:
+            floor[t] = _calc_mode_floor_temperature(heating, t, response[t])
+        elif C[t]:
+            floor[t] = _calc_mode_floor_temperature(cooling, t, response[t])
+        else:
+            # 中間期も付録E式(1)の室側参照温度・温度差係数を使う。
+            # 熱源機出口温度だけをExcelの負荷計算!BSと同じ20℃とする。
+            floor[t] = _calc_floor_temperature_from_supply(
+                heating, t, response[t], 20.0
+            )
+        Theta_g_surf = (
+            (heating.Phi_A_0 / heating.R_g) * floor[t]
+            + response[t]
+            + heating.Theta_g_avg
+        ) / (1.0 + heating.Phi_A_0 / heating.R_g)
+        state = GroundResponseState(floor[t], Theta_g_surf, response_m)
+    return floor, response
+
+
 def _calc_Q_UT_A_once(
         case_name: CaseName,
         climateFile: ClimateFile,
@@ -201,6 +595,7 @@ def _calc_Q_UT_A_once(
         carryover_heat_dto: CarryoverHeatDto,
         load: Load_DTI,
         Theta_uf_ground_feedback_d_t: np.ndarray | None = None,
+        V_dash_supply_override_d_t_i: np.ndarray | None = None,
         export_outputs: bool = True):
     """未処理負荷と機器の計算に必要な変数を取得"""
 
@@ -564,6 +959,8 @@ def _calc_Q_UT_A_once(
         )
         active_mask = H if isinstance(ac_setting, HeatingAcSetting) else C
         Theta_uf_d_t = np.where(active_mask, Theta_uf_d_t, natural_Theta_uf_d_t)
+        # 式(40)の地盤補正に使う予備床下温度。後段の実床下温度と区別する。
+        Theta_uf_preliminary_d_t = Theta_uf_d_t.copy()
         Theta_uf_for_ground_response_d_t = (
             Theta_uf_d_t
             if Theta_uf_ground_feedback_d_t is None
@@ -589,6 +986,8 @@ def _calc_Q_UT_A_once(
         delta_L_uf2outdoor_d_t = np.where(active_mask, delta_L_uf2outdoor_d_t, 0.0)
         assert np.shape(delta_L_uf2outdoor_d_t) == (24 * 365,)
         Q_hat_hs_d_t += delta_L_uf2outdoor_d_t
+        # 逐次計算では、当時刻の地盤応答をこの値へ1回だけ加える。
+        Q_hat_hs_before_ground_d_t = Q_hat_hs_d_t.copy()
 
         #260112 IGUCHI デバッグ用
         #print("delta_L_uf2outdoor_d_t[0] 床下⇒外壁: ", delta_L_uf2outdoor_d_t[0])
@@ -624,6 +1023,14 @@ def _calc_Q_UT_A_once(
         should_be_adjusted_Q_hat_hs_d_t = False
 
     df_output['Q_hat_hs_d_t_ufac'] = Q_hat_hs_d_t
+    if V_dash_supply_override_d_t_i is not None:
+        V_dash_supply_d_t_i = np.asarray(
+            V_dash_supply_override_d_t_i, dtype=float
+        ).copy()
+        if V_dash_supply_d_t_i.shape != (5, 24 * 365):
+            raise ValueError(
+                "V_dash_supply_override_d_t_i must have shape (5, 8760)"
+            )
     df_output2['r_supply_des_i'] = r_supply_des_i
     df_output = df_output.assign(
         r_supply_des_d_t_1 = r_supply_des_d_t_i[0],
@@ -1288,7 +1695,9 @@ def _calc_Q_UT_A_once(
                     L_dash_CS_R_d_t_i = load.L_dash_CS_R_d_t_i,
                     calc_backwards = False,  # ここでは θuf の従来計算のみ
                     new_ufac = new_ufac,
-                    new_ufac_df = new_ufac_df
+                    new_ufac_df = new_ufac_df,
+                    # Excelと同じ時刻順逐次計算で確定した共通履歴を使用する。
+                    Theta_uf_ground_feedback_d_t=Theta_uf_ground_feedback_d_t,
                 )
 
             # 床下・床上の熱貫流分だけ 目標床下温度からわずかな中和がある
@@ -1708,18 +2117,93 @@ def _calc_Q_UT_A_once(
             Theta_g_avg,
         )
 
+    sequential_ground_inputs = None
+    if new_ufac.new_ufac_flg == 床下空調ロジック.変更する:
+        def as_8760(value):
+            return np.broadcast_to(
+                np.asarray(value, dtype=float), (24 * 365,)
+            ).copy()
+
+        sequential_ground_inputs = SequentialGroundModeInputs(
+            is_heating=isinstance(ac_setting, HeatingAcSetting),
+            ac_type=ac_setting.type,
+            VAV=ac_setting.VAV,
+            hs_CAV=skin.hs_CAV,
+            Q_hat_hs_before_ground_d_t=Q_hat_hs_before_ground_d_t.copy(),
+            Q_hat_hs_base_d_t=Q_hat_hs_base_d_t.copy(),
+            Q_hat_hs_CS_base_d_t=Q_hat_hs_CS_base_d_t.copy(),
+            Theta_uf_preliminary_d_t=Theta_uf_preliminary_d_t.copy(),
+            Theta_ex_d_t=Theta_ex_d_t.copy(),
+            Theta_star_HBR_d_t=Theta_star_HBR_d_t.copy(),
+            Theta_sur_d_t_i=Theta_sur_d_t_i.copy(),
+            r_supply_des_d_t_i=(
+                np.tile(dc.get_r_supply_des_i(A_HCZ_i)[:, np.newaxis],
+                        (1, 24 * 365))
+            ).copy(),
+            V_dash_supply_d_t_i=V_dash_supply_d_t_i.copy(),
+            V_vent_g_i=V_vent_g_i.copy(),
+            V_hs_min=float(V_hs_min),
+            V_hs_dsgn=float(
+                dc_a.get_V_fan_dsgn_H(dc_a.get_V_fan_rtd_H(
+                    Q_hs_rtd_H * 1.0e6 / 3600.0
+                ))
+                if isinstance(ac_setting, HeatingAcSetting)
+                else dc_a.get_V_fan_dsgn_C(dc_a.get_V_fan_rtd_C(
+                    Q_hs_rtd_C * 1.0e6 / 3600.0
+                ))
+            ),
+            Q_hs_rtd=float(
+                Q_hs_rtd_H if isinstance(ac_setting, HeatingAcSetting)
+                else Q_hs_rtd_C
+            ),
+            Q_hs_max_H_d_t=as_8760(Q_hs_max_H_d_t),
+            Q_hs_max_C_d_t=as_8760(Q_hs_max_C_d_t),
+            Q_hs_max_CS_independent_d_t=as_8760(Q_hs_max_CS_d_t),
+            L_H_d_t_i=load.L_H_d_t_i.copy(),
+            L_CS_d_t_i=load.L_CS_d_t_i.copy(),
+            L_CL_d_t_i=load.L_CL_d_t_i.copy(),
+            L_dash_H_R_d_t_i=load.L_dash_H_R_d_t_i.copy(),
+            L_dash_CS_R_d_t_i=load.L_dash_CS_R_d_t_i.copy(),
+            V_vent_l_NR_d_t=V_vent_l_NR_d_t.copy(),
+            L_H_NR_d_t_A=L_H_NR_d_t_A.copy(),
+            L_CS_NR_d_t_A=L_CS_NR_d_t_A.copy(),
+            A_HCZ_i=A_HCZ_i.copy(),
+            A_prt_i=A_prt_i.copy(),
+            A_s_ufac_i=A_s_ufac_i.copy(),
+            A_NR=float(A_NR),
+            A_prt_A=float(A_prt_A),
+            A_s_ufac_A=float(A_s_ufac_A),
+            A_s_ufac_HCZ_1F=float(A_s_ufac_HCZ_1F),
+            U_prt=float(U_prt),
+            U_s_load=float(U_s_load),
+            U_s_supply=float(U_s_supply),
+            Q=float(skin.Q),
+            phi=float(phi),
+            L_uf=float(L_uf),
+            R_g=float(jjj_consts.R_g),
+            Phi_A_0=float(Phi_A_0),
+            Theta_g_avg=float(Theta_g_avg),
+            r_A_NR_uf_1F=float(r_A_NR_uf_1F),
+            l_duct_i=l_duct_i.copy(),
+            HCM=np.asarray(climate.get_HCM_d_t()),
+        )
+
     return E_UT_d_t, \
             Theta_hs_out_d_t, Theta_hs_in_d_t, \
             X_hs_out_d_t, X_hs_in_d_t, V_hs_supply_d_t, V_hs_vent_d_t, \
-            Theta_uf_actual_d_t, Theta_uf_M_actual_d_t
+            Theta_uf_actual_d_t, Theta_uf_M_actual_d_t, \
+            sequential_ground_inputs
 
 
-def _solve_shared_ground_feedback(
+def _prepare_and_solve_shared_ground_sequential(
         heating_args: dict,
         cooling_args: dict,
         H: np.ndarray,
-        C: np.ndarray) -> tuple[np.ndarray, int, float]:
-    """暖房・冷房を一つの年間床下温度履歴で反復計算する。"""
+        C: np.ndarray,
+        M: np.ndarray,
+        underfloor_insulation: bool) -> tuple[
+            np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """暖房・冷房の入力を準備し、Excelと同じ年間逐次計算を1回行う。"""
     heating_iteration_args = {
         **{key: value for key, value in heating_args.items()
            if key != "new_ufac_df"},
@@ -1739,42 +2223,23 @@ def _solve_shared_ground_feedback(
         **cooling_iteration_args,
         new_ufac_df=UfVarsDataFrame(),
     )
-    assert heating[7] is not None
-    assert cooling[7] is not None
-    assert heating[8] is not None
-    Theta_uf_feedback_d_t = merge_annual_floor_temperature(
-        heating[7], cooling[7], heating[8], H, C
+    heating_inputs = heating[9]
+    cooling_inputs = cooling[9]
+    assert isinstance(heating_inputs, SequentialGroundModeInputs)
+    assert isinstance(cooling_inputs, SequentialGroundModeInputs)
+    feedback, response = _solve_shared_ground_sequential(
+        heating_inputs,
+        cooling_inputs,
+        H,
+        C,
+        M,
+        underfloor_insulation,
     )
-
-    max_delta = float("inf")
-    for iteration_count in range(1, GROUND_FEEDBACK_MAX_ITERATIONS + 1):
-        heating = _calc_Q_UT_A_once(
-            **heating_iteration_args,
-            new_ufac_df=UfVarsDataFrame(),
-            Theta_uf_ground_feedback_d_t=Theta_uf_feedback_d_t,
-        )
-        cooling = _calc_Q_UT_A_once(
-            **cooling_iteration_args,
-            new_ufac_df=UfVarsDataFrame(),
-            Theta_uf_ground_feedback_d_t=Theta_uf_feedback_d_t,
-        )
-        assert heating[7] is not None
-        assert cooling[7] is not None
-        assert heating[8] is not None
-        Theta_uf_updated_d_t = merge_annual_floor_temperature(
-            heating[7], cooling[7], heating[8], H, C
-        )
-        max_delta = float(np.max(np.abs(
-            Theta_uf_updated_d_t - Theta_uf_feedback_d_t
-        )))
-        Theta_uf_feedback_d_t = Theta_uf_updated_d_t
-        if max_delta <= GROUND_FEEDBACK_TOLERANCE:
-            return Theta_uf_feedback_d_t, iteration_count, max_delta
-
-    raise RuntimeError(
-        "暖房・冷房共通の地盤応答フィードバックが収束しませんでした: "
-        f"iterations={GROUND_FEEDBACK_MAX_ITERATIONS}, "
-        f"max_delta={max_delta:.6g} K"
+    return (
+        feedback,
+        response,
+        heating_inputs.V_dash_supply_d_t_i.copy(),
+        cooling_inputs.V_dash_supply_d_t_i.copy(),
     )
 
 
@@ -1799,12 +2264,7 @@ def calc_Q_UT_A(
         carryover_heat_dto: CarryoverHeatDto,
         load: Load_DTI,
         annual_ground_feedback_context: AnnualGroundFeedbackContext = None):
-    """地盤応答に前時刻の実際の床下温度を反映して未処理負荷を計算する。
-
-    ベクトル計算の構成を維持したまま、1回目で得た実際の床下温度を
-    次の計算の地盤応答へ渡す。calc_sum_Theta_dash_g_surf_A_m_d_t 内では
-    時刻tの応答に時刻t-1の熱流が使われるため、当時刻値の循環参照は生じない。
-    """
+    """前時刻の実床下温度を使い、Excelと同じ時刻順逐次計算を行う。"""
     args = dict(
         case_name=case_name,
         climateFile=climateFile,
@@ -1852,70 +2312,36 @@ def calc_Q_UT_A(
                 "V_hs_dsgn_C": context.V_hs_dsgn_C,
                 "new_ufac_df": UfVarsDataFrame(),
             }
-            H, C, _ = dc.get_season_array_d_t(house.region)
-            feedback, iteration_count, max_delta = \
-                _solve_shared_ground_feedback(
-                    heating_args, cooling_args, H, C
+            H, C, M = dc.get_season_array_d_t(house.region)
+            feedback, response, V_dash_supply_H, V_dash_supply_C = \
+                _prepare_and_solve_shared_ground_sequential(
+                    heating_args,
+                    cooling_args,
+                    H,
+                    C,
+                    M,
+                    skin.underfloor_insulation,
                 )
             context.Theta_uf_feedback_d_t = feedback
+            context.V_dash_supply_H_d_t_i = V_dash_supply_H
+            context.V_dash_supply_C_d_t_i = V_dash_supply_C
             _logger.info(
-                "暖房・冷房共通の地盤応答フィードバック: "
-                f"iterations={iteration_count}, max_delta={max_delta:.6g} K"
+                "暖房・中間期・冷房共通の地盤応答を時刻順に逐次計算: "
+                f"hours={len(response)}, iterations=0"
             )
 
         result = _calc_Q_UT_A_once(
             **args,
             Theta_uf_ground_feedback_d_t=context.Theta_uf_feedback_d_t,
+            V_dash_supply_override_d_t_i=(
+                context.V_dash_supply_H_d_t_i
+                if isinstance(ac_setting, HeatingAcSetting)
+                else context.V_dash_supply_C_d_t_i
+            ),
         )
         return result[:7]
 
-    # 反復中の調査用CSVに中間結果を混ぜない。収束後の1回だけ
-    # 呼出側から渡されたDataFrameと出力ファイルへ記録する。
-    iteration_args = {
-        **{key: value for key, value in args.items() if key != "new_ufac_df"},
-        "export_outputs": False,
-    }
-    result = _calc_Q_UT_A_once(
-        **iteration_args,
-        new_ufac_df=UfVarsDataFrame(),
+    raise RuntimeError(
+        "新床下空調の逐次地盤応答には、暖房・冷房を共有する "
+        "AnnualGroundFeedbackContext が必要です。"
     )
-    Theta_uf_feedback_d_t = result[7]
-    assert Theta_uf_feedback_d_t is not None
-
-    converged = False
-    max_delta = float("inf")
-    iteration_count = 0
-    for iteration_count in range(1, GROUND_FEEDBACK_MAX_ITERATIONS + 1):
-        updated = _calc_Q_UT_A_once(
-            **iteration_args,
-            new_ufac_df=UfVarsDataFrame(),
-            Theta_uf_ground_feedback_d_t=Theta_uf_feedback_d_t,
-        )
-        Theta_uf_updated_d_t = updated[7]
-        assert Theta_uf_updated_d_t is not None
-        max_delta = float(np.max(np.abs(
-            Theta_uf_updated_d_t - Theta_uf_feedback_d_t
-        )))
-        result = updated
-        Theta_uf_feedback_d_t = Theta_uf_updated_d_t
-        if max_delta <= GROUND_FEEDBACK_TOLERANCE:
-            converged = True
-            break
-
-    if not converged:
-        raise RuntimeError(
-            "地盤応答の床下温度フィードバックが収束しませんでした: "
-            f"iterations={iteration_count}, max_delta={max_delta:.6g} K"
-        )
-
-    _logger.info(
-        "地盤応答の床下温度フィードバック: "
-        f"iterations={iteration_count}, max_delta={max_delta:.6g} K"
-    )
-
-    # 収束した前時刻床下温度を使って最終値を1回だけ出力する。
-    result = _calc_Q_UT_A_once(
-        **args,
-        Theta_uf_ground_feedback_d_t=Theta_uf_feedback_d_t,
-    )
-    return result[:7]
